@@ -104,7 +104,7 @@ def get_env_test():
         error = exc
 
     env_var_count = len(properties)
-    properties["test_parameter_count"] = env_var_count
+    properties["test_parameter_count"] = str(env_var_count)
 
     if env_var_count == 0:
         failure_message = "No test parameters found"
@@ -144,14 +144,15 @@ if __name__ == '__main__':
 
     if test_suite_name:
         result_get_env = get_env_test()
-        if result_get_env.get("failure_message", {}):
+        if result_get_env.get("failure_message"):
             skip_reason = "Failure or error within the get_env_test"
             results = [result_get_env, skipped_test("check_emptiness_test", skip_reason)]
         else:
             result_empty = check_emptiness_test()
             results = [result_get_env, result_empty]
     else:
-        skip_reason = "TEST_NAME not set"
+        skip_reason = "TS_NAME not set"
+        test_suite_name = "unknown"
         results = [skipped_test("get_env_test", skip_reason), skipped_test("check_emptiness_test", skip_reason)]
     
     report_path = f'/reports/{test_suite_name}_report.xml'
