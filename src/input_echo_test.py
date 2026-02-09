@@ -144,7 +144,7 @@ if __name__ == '__main__':
 
     if test_suite_name:
         result_get_env = get_env_test()
-        if result_get_env.get("failure_message"):
+        if result_get_env.get("failure_message") or result_get_env.get("error"):
             skip_reason = "Failure or error within the get_env_test"
             results = [result_get_env, skipped_test("check_emptiness_test", skip_reason)]
         else:
