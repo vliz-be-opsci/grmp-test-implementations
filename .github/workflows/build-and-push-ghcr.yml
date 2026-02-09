@@ -31,8 +31,8 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.ORG_PAT }}
-
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
       - name: Determine image tags
         id: tags
         run: |
