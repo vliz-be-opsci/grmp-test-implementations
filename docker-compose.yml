@@ -1,0 +1,19 @@
+services:
+  testecho:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: testechogrmp
+    volumes:
+      - ./reports:/reports:rw
+    environment:
+      - TS_NAME=localtestrun
+      - TEST_VAR1=localtestvariable
+      - TEST_EMPTY_VAR=
+    working_dir: /app
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge
