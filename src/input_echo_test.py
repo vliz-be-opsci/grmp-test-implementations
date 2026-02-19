@@ -74,6 +74,10 @@ def check_emptiness_test():
 
     duration = time.time() - start
 
+    source_file = os.environ.get("SPECIAL_SOURCE_FILE")
+    if source_file:
+        properties["source_file"] = source_file
+
     return {
         "case_name": "check_emptiness_test",
         "properties": properties,
@@ -111,6 +115,13 @@ def get_env_test():
         failure_text = ""
 
     duration = time.time() - start_time
+
+    source_file = os.environ.get("SPECIAL_SOURCE_FILE")
+    if source_file:
+        if "source_file" in properties:
+            # TEST_SOURCE_FILE conflicts with SPECIAL_SOURCE_FILE; keep special value
+            properties["test_source_file"] = properties["source_file"]
+        properties["source_file"] = source_file
 
     return {
         "case_name": "get_env_test", 
