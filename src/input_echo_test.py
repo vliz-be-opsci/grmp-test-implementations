@@ -118,6 +118,9 @@ def get_env_test():
 
     source_file = os.environ.get("SPECIAL_SOURCE_FILE")
     if source_file:
+        if "source_file" in properties:
+            # TEST_SOURCE_FILE conflicts with SPECIAL_SOURCE_FILE; keep special value
+            properties["test_source_file"] = properties["source_file"]
         properties["source_file"] = source_file
 
     return {
