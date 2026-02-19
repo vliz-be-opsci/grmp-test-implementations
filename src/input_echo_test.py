@@ -74,10 +74,6 @@ def check_emptiness_test():
 
     duration = time.time() - start
 
-    source_file = os.environ.get("SPECIAL_SOURCE_FILE")
-    if source_file:
-        properties["source_file"] = source_file
-
     return {
         "case_name": "check_emptiness_test",
         "properties": properties,
