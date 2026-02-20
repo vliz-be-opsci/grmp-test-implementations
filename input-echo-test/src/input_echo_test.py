@@ -116,12 +116,12 @@ def get_env_test():
                     properties[key[len("TEST_"):].lower()] = value
                     print(f"Found: {key} = {value}")
 
-                    env_var_count = len(properties)
-                    properties["test_parameter_count"] = str(env_var_count)
+            env_var_count = len(properties)
+            properties["test_parameter_count"] = str(env_var_count)
 
-                    if env_var_count == 0:
-                        failure_message = "No test parameters found"
-                        failure_text = ""
+            if env_var_count == 0:
+                failure_message = "No test parameters found"
+                failure_text = ""
 
     except Exception as exc:
         error = exc
