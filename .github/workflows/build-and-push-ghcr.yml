@@ -1,4 +1,4 @@
-name: Build and Push Image to GHCR
+name: Build and Push Test Images to GHCR
 
 on:
   push:
@@ -13,11 +13,51 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository}}-input-echo-test 
 
 jobs:
-  build-and-push:
+  detect-changes:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed tests
+        id: set-matrix
+        run: |
+          # Find all test directories (those containing a Dockerfile)
+          ALL_TESTS=$(find . -maxdepth 2 -name "Dockerfile" | sed 's|./||' | xargs -I{} dirname {} | sort)
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            # On a tag, build everything
+            CHANGED_TESTS="$ALL_TESTS"
+          else
+            # On a push to main, only build what changed
+            CHANGED_TESTS=$(git diff --name-only HEAD~1 HEAD \
+              | grep '/' \
+              | cut -d'/' -f1 \
+              | sort -u \
+              | grep -Fx "$ALL_TESTS" || true)
+          fi
+
+          if [[ -z "$CHANGED_TESTS" ]]; then
+            echo "matrix={\"test\":[]}" >> $GITHUB_OUTPUT
+          else
+            # Build a JSON array e.g. {"test":["input-echo-test","other-test"]}
+            JSON=$(echo "$CHANGED_TESTS" | jq -R . | jq -sc '{test: .}')
+            echo "matrix=$JSON" >> $GITHUB_OUTPUT
+          fi
+
+  build-and-push:
+    needs: detect-changes
+    if: ${{ fromJson(needs.detect-changes.outputs.matrix).test[0] != null }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      fail-fast: false  # don't cancel other builds if one fails
 
     steps:
       - name: Checkout repository
@@ -32,12 +72,11 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-          
+
       - name: Determine image tags
         id: tags
         run: |
-          IMAGE="$(echo "${REGISTRY}/${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')"
-
+          IMAGE="$(echo "${REGISTRY}/${{ github.repository }}-${{ matrix.test }}" | tr '[:upper:]' '[:lower:]')"
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
             echo "TAGS=${IMAGE}:${VERSION},${IMAGE}:latest" >> $GITHUB_OUTPUT
@@ -49,7 +88,7 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: Dockerfile
+          context: ${{ matrix.test }}
+          file: ${{ matrix.test }}/Dockerfile
           push: true
           tags: ${{ steps.tags.outputs.TAGS }}
