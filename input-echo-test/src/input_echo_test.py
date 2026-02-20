@@ -8,6 +8,8 @@ import os
 from datetime import datetime, timezone
 import time
 from junitparser import TestCase, TestSuite, JUnitXml, Failure, Error, Skipped
+import contextlib
+import io
 
 def create_junit_report(test_suite_name, results, output_file="echo_report.xml"):
     """Create a jUnit XML report with input parameters using junitparser."""
@@ -32,10 +34,14 @@ def create_junit_report(test_suite_name, results, output_file="echo_report.xml")
                 err = Error(message="Unexpected exception")
                 err.text = str(result["error"])
                 case.result = err
+                case.system_out = result.get("stdout", "")
+                case.system_err = result.get("stderr", "")
             elif result["failure_message"]:
                 failure = Failure(message=result["failure_message"])
                 failure.text = result["failure_text"]
                 case.result = failure
+                case.system_out = result.get("stdout", "")
+                case.system_err = result.get("stderr", "")
 
             suite.add_testcase(case)
         
@@ -53,21 +59,24 @@ def check_emptiness_test():
     failure_text = None
     properties = {}
     skip_reason = ""
+    stdout_capture = io.StringIO()
+    stderr_capture = io.StringIO()
 
     try:
-        empty_vars = []
+        with contextlib.redirect_stdout(stdout_capture), contextlib.redirect_stderr(stderr_capture):
+            empty_vars = []
+            for key, value in os.environ.items():
+                if not key.startswith("TEST_"):
+                    continue
+                elif value is None or value.strip() == "" or value == "None":
+                    empty_vars.append(key[len("TEST_"):].lower())
+                    print(f"Found empty value: {key} = {value}")
 
-        for key, value in os.environ.items():
-            if not key.startswith("TEST_"):
-                continue
-            elif value is None or value.strip() == "" or value == "None":
-                empty_vars.append(key[len("TEST_"):].lower())
+            properties["empty_test_parameter_count"] = str(len(empty_vars))
 
-        properties["empty_test_parameter_count"] = str(len(empty_vars))
-
-        if empty_vars:
-            failure_message = "Empty test parameters found"
-            failure_text = "\n".join(sorted(empty_vars))
+            if empty_vars:
+                failure_message = "Empty test parameters found"
+                failure_text = "\n".join(sorted(empty_vars))
 
     except Exception as exc:
         error = exc
@@ -82,7 +91,9 @@ def check_emptiness_test():
         "failure_message": failure_message,
         "failure_text": failure_text,
         "skipped": False,
-        "skipped_message": skip_reason
+        "skipped_message": skip_reason,
+        "stdout": stdout_capture.getvalue(),
+        "stderr": stderr_capture.getvalue()
     }
 
 def get_env_test():
@@ -93,22 +104,27 @@ def get_env_test():
     failure_text = None
     properties = {}
     skip_reason = ""
+    stdout_capture = io.StringIO()
+    stderr_capture = io.StringIO()
 
     try:
-        for key, value in os.environ.items():
-            if not key.startswith("TEST_"):
-                continue
-            else:
-                properties[key[len("TEST_"):].lower()] = value
+        with contextlib.redirect_stdout(stdout_capture), contextlib.redirect_stderr(stderr_capture):
+            for key, value in os.environ.items():
+                if not key.startswith("TEST_"):
+                    continue
+                else:
+                    properties[key[len("TEST_"):].lower()] = value
+                    print(f"Found: {key} = {value}")
+
+            env_var_count = len(properties)
+            properties["test_parameter_count"] = str(env_var_count)
+
+            if env_var_count == 0:
+                failure_message = "No test parameters found"
+                failure_text = ""
+
     except Exception as exc:
         error = exc
-
-    env_var_count = len(properties)
-    properties["test_parameter_count"] = str(env_var_count)
-
-    if env_var_count == 0:
-        failure_message = "No test parameters found"
-        failure_text = ""
 
     duration = time.time() - start_time
 
@@ -127,7 +143,9 @@ def get_env_test():
         "failure_message": failure_message,
         "failure_text": failure_text,
         "skipped": False,
-        "skipped_message": skip_reason
+        "skipped_message": skip_reason,
+        "stdout": stdout_capture.getvalue(),
+        "stderr": stderr_capture.getvalue()
     }
 
 def skipped_test(case_name, reason="Test skipped"):
@@ -144,6 +162,8 @@ def skipped_test(case_name, reason="Test skipped"):
         "properties": {},
         "skipped": True,
         "skipped_message": reason,
+        "stdout": "",
+        "stderr": ""
     }
 
 if __name__ == '__main__':
