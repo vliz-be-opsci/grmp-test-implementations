@@ -73,7 +73,7 @@ def check_url(url, timeout, max_redirects, verify_ssl=True):
             response = session.get(current_url, timeout=timeout, allow_redirects=False, verify=hop_verify)
             elapsed = time.time() - start
 
-            if response.status_code == 200:
+            if 200 <= response.status_code < 300:
                 return response.status_code, current_url, elapsed, None, False
 
             if 300 <= response.status_code < 400:
@@ -277,9 +277,7 @@ def create_junit_report(suite_name, results, output_file):
         total_time += result["duration"]
 
         for key, value in result["properties"].items():
-            if key == "scheme":
-                suite.get_
-            elif key not in added_properties:
+            if key not in added_properties:
                 suite.add_property(key, value)
                 added_properties.add(key)
 
