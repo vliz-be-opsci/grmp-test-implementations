@@ -48,12 +48,14 @@ def parse_config():
 
 def check_dns(hostname):
     """Resolve hostname to IP. Returns (ip, error)."""
+    if hostname is None:
+        return None, "Could not extract hostname from URL"
     try:
         ip = socket.gethostbyname(hostname)
-        return ip, None
     except socket.gaierror as e:
         return None, str(e)
-
+    else:
+        return ip, None
 
 def check_url(url, timeout, max_redirects, verify_ssl=True):
     """
@@ -224,7 +226,7 @@ def run_availability_test(url, scheme, timeout, max_redirects, verify_ssl=True):
                 failure_message = f"{scheme.upper()} availability check failed"
                 failure_text = err_msg
             else:
-                print(f"OK: {scheme.upper()} available, status 200 in {elapsed:.3f}s")
+                print(f"OK: {scheme.upper()} available, status {status} in {elapsed:.3f}s")
 
     return {
         "case_name": f"{scheme}_availability[{url}]",
