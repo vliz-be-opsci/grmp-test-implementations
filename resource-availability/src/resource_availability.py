@@ -11,6 +11,7 @@ import socket
 import sys
 import time
 import urllib.parse
+import ast
 from datetime import datetime, timezone
 
 import requests
@@ -26,15 +27,8 @@ def capture_output():
 
 
 def parse_config():
-    url_single = os.environ.get("TEST_URL")
-    url_multi = os.environ.get("TEST_URLS")
-
-    if url_multi:
-        urls = [u.strip() for u in url_multi.split(",") if u.strip()]
-    elif url_single:
-        urls = [url_single]
-    else:
-        urls = []
+    raw_urls = os.environ.get("TEST_URLS")
+    urls = ast.literal_eval(raw_urls)
 
     return {
         "urls": urls,
@@ -43,6 +37,7 @@ def parse_config():
         "check_http": os.environ.get("TEST_CHECK-HTTP-AVAILABILITY", "false").lower() == "true",
         "check_https": os.environ.get("TEST_CHECK-HTTPS-AVAILABILITY", "true").lower() == "true",
         "verify_ssl": os.environ.get("TEST_VERIFY-SSL", "true").lower() == "true",
+        "providence":os.environ.get("SPECIAL_SOURCE_FILE", "unknown"), 
     }
 
 
@@ -154,7 +149,7 @@ def run_dns_test(url):
     failure_message = None
     failure_text = None
     error = None
-    properties = {"url": url, "hostname": hostname}
+    properties = {"urls": url, "hostnames": hostname}
 
     with capture_output() as (out, err):
         print(f"Resolving hostname: {hostname}")
@@ -170,7 +165,7 @@ def run_dns_test(url):
     duration = time.time() - start
 
     return {
-        "case_name": f"dns_resolution[{url}]",
+        "case_name": f"dns_resolution [{url}]",
         "duration": duration,
         "error": error,
         "failure_message": failure_message,
@@ -229,7 +224,7 @@ def run_availability_test(url, scheme, timeout, max_redirects, verify_ssl=True):
                 print(f"OK: {scheme.upper()} available, status {status} in {elapsed:.3f}s")
 
     return {
-        "case_name": f"{scheme}_availability[{url}]",
+        "case_name": f"{scheme}_availability [{url}]",
         "duration": elapsed,
         "error": error,
         "failure_message": failure_message,
@@ -253,36 +248,38 @@ def run_tests_for_url(url, config):
     # HTTP
     if config["check_http"]:
         if dns_failed:
-            results.append(skipped_test(f"http_availability[{url}]", "Skipped due to DNS failure"))
+            results.append(skipped_test(f"http_availability [{url}]", "Skipped due to DNS failure"))
         else:
             results.append(run_availability_test(url, "http", config["timeout"], config["max_redirects"], config["verify_ssl"]))
 
     # HTTPS
     if config["check_https"]:
         if dns_failed:
-            results.append(skipped_test(f"https_availability[{url}]", "Skipped due to DNS failure"))
+            results.append(skipped_test(f"https_availability [{url}]", "Skipped due to DNS failure"))
         else:
             results.append(run_availability_test(url, "https", config["timeout"], config["max_redirects"], config["verify_ssl"]))
 
     return results
 
-
-def create_junit_report(suite_name, results, output_file):
+def create_junit_report(suite_name, results, output_file, special_key_append_properties, providence):
     suite = TestSuite(suite_name)
     suite.timestamp = datetime.now(timezone.utc).isoformat()
     total_time = 0.0
     added_properties = set()
+    append_properties = {}  # key -> list of values to be appended
 
     for result in results:
         case = TestCase(result["case_name"], classname=suite_name)
         case.time = result["duration"]
         total_time += result["duration"]
-
         for key, value in result["properties"].items():
-            if key not in added_properties:
+            if key in special_key_append_properties:
+                if key not in append_properties:
+                    append_properties[key] = []
+                append_properties[key].append(value)
+            elif key not in added_properties:
                 suite.add_property(key, value)
                 added_properties.add(key)
-
         if result["skipped"]:
             case.result = [Skipped(message=result["skipped_message"])]
         else:
@@ -294,19 +291,20 @@ def create_junit_report(suite_name, results, output_file):
                 failure = Failure(message=result["failure_message"])
                 failure.text = result["failure_text"]
                 case.result = [failure]
-
             if result.get("stdout"):
                 case.system_out = result["stdout"]
             if result.get("stderr"):
                 case.system_err = result["stderr"]
-
         suite.add_testcase(case)
 
+    for key, values in append_properties.items():
+        suite.add_property(key, ", ".join(values))
+
+    suite.add_property("providence", providence)
     suite.time = total_time
     xml = JUnitXml()
     xml.add_testsuite(suite)
     xml.write(output_file)
-
 
 if __name__ == "__main__":
     suite_name = os.environ.get("TS_NAME", "resource-availability")
@@ -320,4 +318,4 @@ if __name__ == "__main__":
             results.extend(run_tests_for_url(url, config))
 
     report_path = f"/reports/{suite_name}_report.xml"
-    create_junit_report(suite_name, results, output_file=report_path)
+    create_junit_report(suite_name, results, output_file=report_path, special_key_append_properties={'urls', 'hostnames'}, providence=config["providence"])
