@@ -26,15 +26,8 @@ def capture_output():
 
 
 def parse_config():
-    url_single = os.environ.get("TEST_URL")
-    url_multi = os.environ.get("TEST_URLS")
-
-    if url_multi:
-        urls = [u.strip() for u in url_multi.split(",") if u.strip()]
-    elif url_single:
-        urls = [url_single]
-    else:
-        urls = []
+    raw_urls = os.environ.get("TEST_URLS")
+    urls = [u.strip() for u in raw_urls.strip("[]").split(",") if u.strip()]
 
     return {
         "urls": urls,

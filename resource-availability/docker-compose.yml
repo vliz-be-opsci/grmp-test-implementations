@@ -8,7 +8,7 @@ services:
       - ./reports:/reports:rw
     environment:
       - TS_NAME=localtestrun
-      - TEST_URL=https://brugge-ldes.geomobility.eu/observations
+      - TEST_URLS=[https://brugge-ldes.geomobility.eu/observations, https://ldes.telraam-api.net/locations]
       - TEST_MAX-REDIRECTS=3
       - TEST_TIMEOUT=10
       - TEST_CHECK-HTTP-AVAILABILITY=TRUE
