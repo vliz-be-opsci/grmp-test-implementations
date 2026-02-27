@@ -11,8 +11,8 @@ services:
       - TEST_URL=https://brugge-ldes.geomobility.eu/observations
       - TEST_MAX-REDIRECTS=3
       - TEST_TIMEOUT=10
-      - TEST_CHECK_HTTP_AVAILABILITY=TRUE
-      - TEST_CHECK_HTTPS_AVAILABILITY=TRUE
+      - TEST_CHECK-HTTP-AVAILABILITY=TRUE
+      - TEST_CHECK-HTTPS-AVAILABILITY=TRUE
       - TEST_VERIFY-SSL=TRUE
     working_dir: /app
     networks:

@@ -40,8 +40,8 @@ def parse_config():
         "urls": urls,
         "max_redirects": int(os.environ.get("TEST_MAX-REDIRECTS", "0")),
         "timeout": int(os.environ.get("TEST_TIMEOUT", "30")),
-        "check_http": os.environ.get("TEST_CHECK_HTTP_AVAILABILITY", "false").lower() == "true",
-        "check_https": os.environ.get("TEST_CHECK_HTTPS_AVAILABILITY", "true").lower() == "true",
+        "check_http": os.environ.get("TEST_CHECK-HTTP-AVAILABILITY", "false").lower() == "true",
+        "check_https": os.environ.get("TEST_CHECK-HTTPS-AVAILABILITY", "true").lower() == "true",
         "verify_ssl": os.environ.get("TEST_VERIFY-SSL", "true").lower() == "true",
     }
 
