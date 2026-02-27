@@ -37,6 +37,7 @@ def parse_config():
         "check_http": os.environ.get("TEST_CHECK-HTTP-AVAILABILITY", "false").lower() == "true",
         "check_https": os.environ.get("TEST_CHECK-HTTPS-AVAILABILITY", "true").lower() == "true",
         "verify_ssl": os.environ.get("TEST_VERIFY-SSL", "true").lower() == "true",
+        "providence":os.environ.get("SPECIAL_SOURCE_FILE", "unknown"), 
     }
 
 
@@ -260,7 +261,7 @@ def run_tests_for_url(url, config):
 
     return results
 
-def create_junit_report(suite_name, results, output_file, special_key_append_properties):
+def create_junit_report(suite_name, results, output_file, special_key_append_properties, providence):
     suite = TestSuite(suite_name)
     suite.timestamp = datetime.now(timezone.utc).isoformat()
     total_time = 0.0
@@ -299,6 +300,7 @@ def create_junit_report(suite_name, results, output_file, special_key_append_pro
     for key, values in append_properties.items():
         suite.add_property(key, ", ".join(values))
 
+    suite.add_property("providence", providence)
     suite.time = total_time
     xml = JUnitXml()
     xml.add_testsuite(suite)
@@ -316,4 +318,4 @@ if __name__ == "__main__":
             results.extend(run_tests_for_url(url, config))
 
     report_path = f"/reports/{suite_name}_report.xml"
-    create_junit_report(suite_name, results, output_file=report_path, special_key_append_properties={'urls', 'hostnames'})
+    create_junit_report(suite_name, results, output_file=report_path, special_key_append_properties={'urls', 'hostnames'}, providence=config["providence"])
