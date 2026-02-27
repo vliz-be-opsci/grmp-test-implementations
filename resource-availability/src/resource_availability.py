@@ -11,6 +11,7 @@ import socket
 import sys
 import time
 import urllib.parse
+import ast
 from datetime import datetime, timezone
 
 import requests
@@ -27,7 +28,7 @@ def capture_output():
 
 def parse_config():
     raw_urls = os.environ.get("TEST_URLS")
-    urls = [u.strip() for u in raw_urls.strip("[]").split(",") if u.strip()]
+    urls = ast.literal_eval(raw_urls)
 
     return {
         "urls": urls,
