@@ -27,8 +27,18 @@ def capture_output():
 
 
 def parse_config():
-    raw_urls = os.environ.get("TEST_URLS")
-    urls = ast.literal_eval(raw_urls)
+    raw_urls = os.environ.get("TEST_URLS", "[]")
+    try:
+        parsed_urls = ast.literal_eval(raw_urls)
+    except (ValueError, SyntaxError):
+        parsed_urls = []
+
+    if isinstance(parsed_urls, str):
+        parsed_urls = [parsed_urls]
+    elif not isinstance(parsed_urls, (list, tuple)):
+        raise ValueError("TEST_URLS must be a URL string or list/tuple of URL strings")
+
+    urls = [u for u in parsed_urls if isinstance(u, str) and u]
 
     return {
         "urls": urls,
@@ -298,7 +308,9 @@ def create_junit_report(suite_name, results, output_file, special_key_append_pro
         suite.add_testcase(case)
 
     for key, values in append_properties.items():
-        suite.add_property(key, ", ".join(values))
+        normalized_values = [str(v) for v in values if v is not None and str(v) != ""]
+        if normalized_values:
+            suite.add_property(key, ", ".join(normalized_values))
 
     suite.add_property("providence", providence)
     suite.time = total_time
