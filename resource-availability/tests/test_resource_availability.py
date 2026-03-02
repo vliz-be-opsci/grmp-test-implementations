@@ -13,7 +13,8 @@ import os
 import pytest
 from unittest.mock import patch, MagicMock
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+# Only for local testing
+# sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from resource_availability import (
     check_dns,
