@@ -51,8 +51,37 @@ jobs:
             echo "matrix=$JSON" >> $GITHUB_OUTPUT
           fi
 
-  build-and-push:
+  unit-test:
     needs: detect-changes
+    if: ${{ fromJson(needs.detect-changes.outputs.matrix).test[0] != null }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      fail-fast: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          if [ -f "${{ matrix.test }}/requirements-dev.txt" ]; then
+            pip install -r ${{ matrix.test }}/requirements-dev.txt
+          fi
+      - name: Run unit tests
+        run: |
+          if [ -d "${{ matrix.test }}/tests" ]; then
+            pytest ${{ matrix.test }}/tests/ -v
+          else
+            echo "No unit tests found for ${{ matrix.test }}, skipping."
+          fi
+        env:
+          PYTHONPATH: ${{ matrix.test }}/src
+
+  build-and-push:
+    needs: [detect-changes, unit-test]
     if: ${{ fromJson(needs.detect-changes.outputs.matrix).test[0] != null }}
     runs-on: ubuntu-latest
     strategy:
