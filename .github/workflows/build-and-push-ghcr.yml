@@ -67,10 +67,16 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: |
-          pip install -r ${{ matrix.test }}/requirements-dev.txt
+          if [ -f "${{ matrix.test }}/requirements-dev.txt" ]; then
+            pip install -r ${{ matrix.test }}/requirements-dev.txt
+          fi
       - name: Run unit tests
         run: |
-          pytest ${{ matrix.test }}/tests/ -v
+          if [ -d "${{ matrix.test }}/tests" ]; then
+            pytest ${{ matrix.test }}/tests/ -v
+          else
+            echo "No unit tests found for ${{ matrix.test }}, skipping."
+          fi
         env:
           PYTHONPATH: ${{ matrix.test }}/src
 
