@@ -214,54 +214,50 @@ class TestGetCertificateExpiry:
 # ---------------------------------------------------------------------------
 
 class TestCheckExpiry:
+    NOW = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
     def test_valid_cert_returns_ok(self):
-        expiry_dt = utcnow() + timedelta(days=60)
-        status, message = check_expiry(expiry_dt, expiry_days=30)
+        expiry_dt = self.NOW + timedelta(days=60)
+        status, message = check_expiry(expiry_dt, expiry_days=30, now=self.NOW)
         assert status == "ok"
         assert "60" in message
 
     def test_expired_cert_returns_expired(self):
-        expiry_dt = utcnow() - timedelta(days=1)
-        status, message = check_expiry(expiry_dt, expiry_days=30)
+        expiry_dt = self.NOW - timedelta(days=1)
+        status, message = check_expiry(expiry_dt, expiry_days=30, now=self.NOW)
         assert status == "expired"
         assert "expired" in message.lower()
 
     def test_expiring_within_threshold_returns_warn(self):
-        expiry_dt = utcnow() + timedelta(days=10)
-        status, message = check_expiry(expiry_dt, expiry_days=30)
+        expiry_dt = self.NOW + timedelta(days=10)
+        status, message = check_expiry(expiry_dt, expiry_days=30, now=self.NOW)
         assert status == "warn"
         assert "10" in message
 
     def test_exactly_on_threshold_boundary_returns_warn(self):
         # days_remaining = expiry_days - 1 (timedelta.days truncates hours)
-        expiry_dt = utcnow() + timedelta(days=29, hours=23)
-        status, _ = check_expiry(expiry_dt, expiry_days=30)
+        expiry_dt = self.NOW + timedelta(days=29, hours=23)
+        status, _ = check_expiry(expiry_dt, expiry_days=30, now=self.NOW)
         assert status == "warn"
 
     def test_one_day_past_threshold_returns_ok(self):
-        expiry_dt = utcnow() + timedelta(days=31)
-        status, _ = check_expiry(expiry_dt, expiry_days=30)
+        expiry_dt = self.NOW + timedelta(days=31)
+        status, _ = check_expiry(expiry_dt, expiry_days=30, now=self.NOW)
         assert status == "ok"
 
     def test_expiry_message_contains_threshold(self):
-        expiry_dt = utcnow() + timedelta(days=5)
-        _, message = check_expiry(expiry_dt, expiry_days=14)
+        expiry_dt = self.NOW + timedelta(days=5)
+        _, message = check_expiry(expiry_dt, expiry_days=14, now=self.NOW)
         assert "14" in message
 
     def test_expired_message_contains_expiry_date(self):
-        expiry_dt = datetime(2020, 1, 1, tzinfo=timezone.utc)
-        _, message = check_expiry(expiry_dt, expiry_days=30)
-        assert "2020" in message
-
-    def test_custom_now_is_respected(self):
-        now = datetime(2024, 6, 1, tzinfo=timezone.utc)
-        expiry_dt = datetime(2024, 6, 20, tzinfo=timezone.utc)  # 19 days away
-        status, _ = check_expiry(expiry_dt, expiry_days=30, now=now)
-        assert status == "warn"
+        expiry_dt = self.NOW - timedelta(days=365)
+        _, message = check_expiry(expiry_dt, expiry_days=30, now=self.NOW)
+        assert "2023" in message
 
     def test_zero_expiry_days_threshold_never_warns(self):
-        expiry_dt = utcnow() + timedelta(days=1)
-        status, _ = check_expiry(expiry_dt, expiry_days=0)
+        expiry_dt = self.NOW + timedelta(days=1)
+        status, _ = check_expiry(expiry_dt, expiry_days=0, now=self.NOW)
         assert status == "ok"
 
 
@@ -367,6 +363,18 @@ class TestRunExpiryTest:
             run_expiry_test("https://example.com", timeout=10, expiry_days=30)
         assert captured["port"] == 443
 
+    def test_missing_hostname_returns_error(self):
+        result = run_expiry_test("https://", timeout=10, expiry_days=30)
+        assert result["error"] is not None
+        assert "hostname" in result["error"].lower()
+        assert result["failure_message"] is None
+
+    def test_invalid_port_returns_error(self):
+        result = run_expiry_test("https://example.com:abc", timeout=10, expiry_days=30)
+        assert result["error"] is not None
+        assert "port" in result["error"].lower()
+        assert result["failure_message"] is None
+
 
 # ---------------------------------------------------------------------------
 # run_tests_for_url
@@ -433,6 +441,14 @@ class TestParseConfig:
     def test_providence_from_env(self, monkeypatch):
         monkeypatch.setenv("SPECIAL_SOURCE_FILE", "my-config.yaml")
         assert parse_config()["providence"] == "my-config.yaml"
+
+    def test_invalid_timeout_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_TIMEOUT", "not-a-number")
+        assert parse_config()["timeout"] == 30
+
+    def test_invalid_expiry_days_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_CERTIFICATE-EXPIRY-DAYS", "not-a-number")
+        assert parse_config()["expiry_days"] == 30
 
 
 # ---------------------------------------------------------------------------

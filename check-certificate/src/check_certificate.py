@@ -27,6 +27,15 @@ def capture_output():
         yield out, err
 
 
+def _parse_int_env(name, default):
+    raw = os.environ.get(name, str(default))
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"Invalid {name}={raw!r}; falling back to {default}", file=sys.stderr)
+        return default
+
+
 def parse_config():
     raw_urls = os.environ.get("TEST_URLS", "[]")
     try:
@@ -43,8 +52,8 @@ def parse_config():
 
     return {
         "urls": urls,
-        "timeout": int(os.environ.get("TEST_TIMEOUT", "30")),
-        "expiry_days": int(os.environ.get("TEST_CERTIFICATE-EXPIRY-DAYS", "30")),
+        "timeout": _parse_int_env("TEST_TIMEOUT", 30),
+        "expiry_days": _parse_int_env("TEST_CERTIFICATE-EXPIRY-DAYS", 30),
         "providence": os.environ.get("SPECIAL_SOURCE_FILE", "unknown"),
     }
 
@@ -124,11 +133,33 @@ def skipped_test(case_name, reason):
     }
 
 
+def _malformed_url_result(url, reason):
+    return {
+        "case_name": f"certificate_expiry [{url}]",
+        "duration": 0.0,
+        "error": f"Malformed URL: {reason}",
+        "failure_message": None,
+        "failure_text": None,
+        "properties": {"urls": url, "hostnames": ""},
+        "skipped": False,
+        "skipped_message": "",
+        "stdout": "",
+        "stderr": "",
+    }
+
+
 def run_expiry_test(url, timeout, expiry_days):
     """Check certificate expiration for a single URL."""
     parsed = urllib.parse.urlparse(url)
     hostname = parsed.hostname
-    port = parsed.port or 443
+
+    try:
+        port = parsed.port or 443
+    except ValueError:
+        return _malformed_url_result(url, f"invalid port in '{url}'")
+
+    if not hostname:
+        return _malformed_url_result(url, f"could not extract hostname from '{url}'")
 
     failure_message = None
     failure_text = None
