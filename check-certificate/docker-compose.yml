@@ -1,0 +1,20 @@
+services:
+  checkcertificate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: checkcertificate
+    volumes:
+      - ./reports:/reports:rw
+    environment:
+      - TS_NAME=localtestrun
+      - TEST_URLS=['https://brugge-ldes.geomobility.eu/observations', 'https://ldes.telraam-api.net/locations']
+      - TEST_TIMEOUT=10
+      - TEST_CERTIFICATE-EXPIRY-DAYS=30
+    working_dir: /app
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge
