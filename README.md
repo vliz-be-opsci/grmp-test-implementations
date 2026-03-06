@@ -30,3 +30,15 @@ Checks the TLS certificate expiration for one or more URLs. For each URL it test
 3) whether the certificate expiry is not within a configurable threshold of days
 
 It then creates a JUNIT XML file containing the results and adds the tested URLs, hostnames, timeout and certificate expiry threshold as testsuite properties.
+
+### 4 CORS Compliance
+
+Checks CORS header compliance for one or more URLs. For each URL it tests:
+
+1) whether `access-control-allow-origin` correctly allows the configured origin(s)
+2) whether `access-control-allow-methods` advertises at least the configured methods
+3) whether `access-control-allow-headers` advertises at least the configured headers
+4) whether `access-control-expose-headers` exposes at least the configured headers
+5) whether HTTP redirects to HTTPS and whether CORS headers survive the redirect (optional)
+
+Origin and method/header checks use an OPTIONS preflight request; expose-header checks use a GET request. SSL certificate validity is intentionally not checked as that is the responsibility of the Check Certificate test. It then creates a JUNIT XML file containing the results and adds the tested URLs, hostnames and all configuration parameters as testsuite properties.
