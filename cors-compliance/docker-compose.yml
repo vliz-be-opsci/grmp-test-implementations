@@ -1,0 +1,23 @@
+services:
+  corscompliance:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: corscompliance
+    volumes:
+      - ./reports:/reports:rw
+    environment:
+      - TS_NAME=localtestrun
+      - TEST_URLS=['https://brugge-ldes.geomobility.eu/observations', 'https://ldes.telraam-api.net/locations', 'https://marineregions.org/feed']
+      - TEST_ACCESS-CONTROL-ALLOW-ORIGIN=['*']
+      - TEST_ACCESS-CONTROL-ALLOW-METHODS=['GET', 'HEAD', 'OPTIONS']
+      - TEST_ACCESS-CONTROL-ALLOW-HEADERS=['Accept', 'X-Custom-Header']
+      - TEST_ACCESS-CONTROL-EXPOSE-HEADERS=['Content-Type', 'Link']
+      - TEST_HTTPS-REDIRECT=TRUE
+    working_dir: /app
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge

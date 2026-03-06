@@ -1,0 +1,624 @@
+#!/usr/bin/env python3
+"""
+CORS Compliance Check
+Checks CORS headers for one or more URLs and writes a JUnit XML report.
+
+For each URL the following test cases are produced:
+  - access_control_allow_origin  [url] [origin]  (one per configured origin)
+  - access_control_allow_methods [url]
+  - access_control_allow_headers [url]
+  - access_control_expose_headers [url]           (Should)
+  - https_redirect               [url]            (Should, only if https-redirect: true)
+"""
+
+import ast
+import contextlib
+import io
+import os
+import sys
+import time
+import urllib.parse
+from datetime import datetime, timezone
+
+import requests
+import urllib3
+from junitparser import TestCase, TestSuite, JUnitXml, Failure, Error, Skipped
+
+# SSL verification is intentionally disabled (see _request). Suppress the
+# resulting urllib3 warning so it doesn't pollute test output and JUnit stderr.
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+# ---------------------------------------------------------------------------
+# Output capture
+# ---------------------------------------------------------------------------
+
+@contextlib.contextmanager
+def capture_output():
+    out = io.StringIO()
+    err = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        yield out, err
+
+
+# ---------------------------------------------------------------------------
+# Config parsing helpers
+# ---------------------------------------------------------------------------
+
+def _parse_int_env(name, default, *, minimum=None):
+    raw = os.environ.get(name, str(default))
+    try:
+        value = int(raw)
+    except ValueError:
+        print(f"Invalid {name}={raw!r}; falling back to {default}", file=sys.stderr)
+        return default
+    if minimum is not None and value < minimum:
+        print(
+            f"Invalid {name}={raw!r}; must be >= {minimum}. Falling back to {default}",
+            file=sys.stderr,
+        )
+        return default
+    return value
+
+
+def _parse_list_env(name, default):
+    """
+    Parse an env variable expected to be a Python list literal, e.g. "['a', 'b']".
+    Falls back to default (a list) on any parse error.
+    A bare string is wrapped in a list for convenience.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        parsed = ast.literal_eval(raw)
+    except (ValueError, SyntaxError):
+        print(f"Invalid {name}={raw!r}; falling back to default", file=sys.stderr)
+        return default
+    if isinstance(parsed, str):
+        return [parsed]
+    if isinstance(parsed, (list, tuple)):
+        return [v for v in parsed if isinstance(v, str) and v]
+    print(f"Invalid {name}={raw!r}; must be a list of strings. Falling back to default", file=sys.stderr)
+    return default
+
+
+def _parse_origins(raw_origins):
+    """
+    Validate the parsed list of origins.
+    Returns (origins, error) where error is a string or None.
+    A list mixing '*' with specific origins is rejected.
+    """
+    if not raw_origins:
+        return ["*"], None
+    has_wildcard = "*" in raw_origins
+    has_specific = any(o != "*" for o in raw_origins)
+    if has_wildcard and has_specific:
+        return None, "access-control-allow-origin cannot mix '*' with specific origins"
+    return raw_origins, None
+
+
+def parse_config():
+    raw_urls = _parse_list_env("TEST_URLS", [])
+    urls = [u for u in raw_urls if isinstance(u, str) and u]
+
+    raw_origins = _parse_list_env("TEST_ACCESS-CONTROL-ALLOW-ORIGIN", ["*"])
+    origins, origin_error = _parse_origins(raw_origins)
+    if origin_error:
+        print(f"Config error: {origin_error}. Falling back to ['*']", file=sys.stderr)
+        origins = ["*"]
+
+    return {
+        "urls": urls,
+        "origins": origins,
+        "allow_methods": _parse_list_env(
+            "TEST_ACCESS-CONTROL-ALLOW-METHODS", ["GET", "HEAD", "OPTIONS"]
+        ),
+        "allow_headers": _parse_list_env(
+            "TEST_ACCESS-CONTROL-ALLOW-HEADERS", ["Accept"]
+        ),
+        "expose_headers": _parse_list_env(
+            "TEST_ACCESS-CONTROL-EXPOSE-HEADERS", ["Content-Type", "Link"]
+        ),
+        "https_redirect": os.environ.get("TEST_HTTPS-REDIRECT", "false").lower() == "true",
+        "probe_origin": os.environ.get("TEST_PROBE-ORIGIN", "https://vliz.be"),
+        "timeout": _parse_int_env("TEST_TIMEOUT", 30, minimum=1),
+        "provenance": os.environ.get("SPECIAL_SOURCE_FILE", "unknown"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# HTTP helpers
+# ---------------------------------------------------------------------------
+
+def _make_session():
+    session = requests.Session()
+    # Do not follow redirects automatically — we handle them explicitly
+    session.max_redirects = 0
+    return session
+
+
+def _request(method, url, headers, timeout, allow_redirects=True):
+    """
+    Perform an HTTP request.
+    SSL verification is intentionally disabled — certificate validity is the
+    responsibility of check_certificate, not this test.
+    Returns (response, error_string). On network/timeout error response is None.
+    """
+    try:
+        response = requests.request(
+            method, url,
+            headers=headers,
+            timeout=timeout,
+            allow_redirects=allow_redirects,
+            verify=False,
+        )
+        return response, None
+    except requests.exceptions.Timeout:
+        return None, f"Request timed out after {timeout}s"
+    except requests.exceptions.SSLError as e:
+        return None, f"SSL error: {e}"
+    except requests.exceptions.ConnectionError as e:
+        return None, f"Connection error: {e}"
+    except requests.exceptions.RequestException as e:
+        return None, f"Request error: {e}"
+
+
+def _follow_to_final(method, url, request_headers, timeout):
+    """
+    Follow redirects manually, returning the final response.
+    Returns (final_response, redirect_chain, error_string).
+    redirect_chain is a list of (from_url, to_url, status_code) tuples.
+    """
+    current_url = url
+    chain = []
+    seen = set()
+    max_hops = 10
+
+    for _ in range(max_hops):
+        if current_url in seen:
+            return None, chain, f"Redirect loop detected at {current_url}"
+        seen.add(current_url)
+
+        response, err = _request(method, current_url, request_headers, timeout, allow_redirects=False)
+        if err:
+            return None, chain, err
+
+        if response.status_code in (301, 302, 303, 307, 308):
+            location = response.headers.get("Location")
+            if not location:
+                return None, chain, f"Redirect response {response.status_code} missing Location header"
+            # Resolve relative redirects
+            next_url = urllib.parse.urljoin(current_url, location)
+            chain.append((current_url, next_url, response.status_code))
+            current_url = next_url
+        else:
+            return response, chain, None
+
+    return None, chain, f"Too many redirects (>{max_hops})"
+
+
+# ---------------------------------------------------------------------------
+# Result builder
+# ---------------------------------------------------------------------------
+
+def _result(case_name, url, *, failure_message=None, failure_text=None,
+            error=None, skipped=False, skipped_message="",
+            stdout="", stderr="", duration=0.0, properties=None):
+    return {
+        "case_name": case_name,
+        "duration": duration,
+        "error": error,
+        "failure_message": failure_message,
+        "failure_text": failure_text,
+        "properties": properties if properties is not None else {"urls": url, "hostnames": _hostname(url)},
+        "skipped": skipped,
+        "skipped_message": skipped_message,
+        "stdout": stdout,
+        "stderr": stderr,
+    }
+
+
+def skipped_test(case_name, reason):
+    return _result(case_name, "", skipped=True, skipped_message=reason, properties={})
+
+
+def _hostname(url):
+    try:
+        return urllib.parse.urlparse(url).hostname or ""
+    except Exception:
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Individual test runners
+# ---------------------------------------------------------------------------
+
+def run_allow_origin_test(url, origin, probe_origin, timeout):
+    """
+    Test access-control-allow-origin for a single URL/origin combination.
+    If origin is '*', sends the probe_origin and expects '*' back.
+    Otherwise sends the origin itself and expects it reflected back.
+    """
+    case_name = f"access_control_allow_origin [{url}] [{origin}]"
+    sending_origin = probe_origin if origin == "*" else origin
+    request_headers = {"Origin": sending_origin}
+
+    start = time.time()
+    with capture_output() as (out, err):
+        print(f"OPTIONS {url} with Origin: {sending_origin}")
+        response, chain, req_err = _follow_to_final("OPTIONS", url, request_headers, timeout)
+
+        if req_err:
+            print(f"Request failed: {req_err}", file=sys.stderr)
+            duration = time.time() - start
+            return _result(case_name, url, error=f"Request failed: {req_err}",
+                           stdout=out.getvalue(), stderr=err.getvalue(), duration=duration)
+
+        if chain:
+            print(f"Followed {len(chain)} redirect(s) to {response.url}")
+
+        actual = response.headers.get("access-control-allow-origin", "").strip()
+        print(f"access-control-allow-origin: {actual!r}")
+
+        failure_message = None
+        failure_text = None
+
+        if not actual:
+            failure_message = "Header 'access-control-allow-origin' is missing"
+            failure_text = (
+                f"Expected {origin!r} but header was absent in response from {response.url}"
+            )
+        elif origin == "*" and actual != "*":
+            failure_message = "access-control-allow-origin does not allow all origins"
+            failure_text = f"Expected '*' but got {actual!r}"
+        elif origin != "*" and actual != origin:
+            failure_message = "access-control-allow-origin does not reflect the requested origin"
+            failure_text = f"Expected {origin!r} but got {actual!r}"
+
+    duration = time.time() - start
+    return _result(case_name, url, failure_message=failure_message, failure_text=failure_text,
+                   stdout=out.getvalue(), stderr=err.getvalue(), duration=duration)
+
+
+def run_allow_methods_test(url, expected_methods, timeout):
+    """
+    Test access-control-allow-methods via OPTIONS preflight.
+    Asserts configured methods are a subset of the server's advertised methods.
+    """
+    case_name = f"access_control_allow_methods [{url}]"
+    request_headers = {"Origin": "https://vliz.be", "Access-Control-Request-Method": "GET"}
+
+    start = time.time()
+    with capture_output() as (out, err):
+        print(f"OPTIONS {url} (checking allow-methods)")
+        response, chain, req_err = _follow_to_final("OPTIONS", url, request_headers, timeout)
+
+        if req_err:
+            print(f"Request failed: {req_err}", file=sys.stderr)
+            duration = time.time() - start
+            return _result(case_name, url, error=f"Request failed: {req_err}",
+                           stdout=out.getvalue(), stderr=err.getvalue(), duration=duration)
+
+        raw = response.headers.get("access-control-allow-methods", "")
+        print(f"access-control-allow-methods: {raw!r}")
+        advertised = {m.strip().upper() for m in raw.split(",") if m.strip()}
+        required = {m.strip().upper() for m in expected_methods}
+
+        failure_message = None
+        failure_text = None
+
+        if not raw.strip():
+            failure_message = "Header 'access-control-allow-methods' is missing"
+            failure_text = f"Expected methods {sorted(required)} but header was absent"
+        else:
+            missing = required - advertised
+            if missing:
+                failure_message = "access-control-allow-methods is missing required methods"
+                failure_text = (
+                    f"Missing: {sorted(missing)}\n"
+                    f"Advertised: {sorted(advertised)}\n"
+                    f"Required: {sorted(required)}"
+                )
+
+    duration = time.time() - start
+    return _result(case_name, url, failure_message=failure_message, failure_text=failure_text,
+                   stdout=out.getvalue(), stderr=err.getvalue(), duration=duration)
+
+
+def run_allow_headers_test(url, expected_headers, timeout):
+    """
+    Test access-control-allow-headers via OPTIONS preflight.
+    Asserts configured headers are a subset of the server's advertised headers.
+    """
+    case_name = f"access_control_allow_headers [{url}]"
+    request_headers = {
+        "Origin": "https://vliz.be",
+        "Access-Control-Request-Headers": ", ".join(expected_headers),
+    }
+
+    start = time.time()
+    with capture_output() as (out, err):
+        print(f"OPTIONS {url} (checking allow-headers)")
+        response, chain, req_err = _follow_to_final("OPTIONS", url, request_headers, timeout)
+
+        if req_err:
+            print(f"Request failed: {req_err}", file=sys.stderr)
+            duration = time.time() - start
+            return _result(case_name, url, error=f"Request failed: {req_err}",
+                           stdout=out.getvalue(), stderr=err.getvalue(), duration=duration)
+
+        raw = response.headers.get("access-control-allow-headers", "")
+        print(f"access-control-allow-headers: {raw!r}")
+        advertised = {h.strip().lower() for h in raw.split(",") if h.strip()}
+        required = {h.strip().lower() for h in expected_headers}
+
+        failure_message = None
+        failure_text = None
+
+        if not raw.strip():
+            failure_message = "Header 'access-control-allow-headers' is missing"
+            failure_text = f"Expected headers {sorted(required)} but header was absent"
+        else:
+            missing = required - advertised
+            if missing:
+                failure_message = "access-control-allow-headers is missing required headers"
+                failure_text = (
+                    f"Missing: {sorted(missing)}\n"
+                    f"Advertised: {sorted(advertised)}\n"
+                    f"Required: {sorted(required)}"
+                )
+
+    duration = time.time() - start
+    return _result(case_name, url, failure_message=failure_message, failure_text=failure_text,
+                   stdout=out.getvalue(), stderr=err.getvalue(), duration=duration)
+
+
+def run_expose_headers_test(url, expected_headers, probe_origin, timeout):
+    """
+    Test access-control-expose-headers via GET request.
+    Asserts configured headers are a subset of the server's exposed headers.
+    """
+    case_name = f"access_control_expose_headers [{url}]"
+    request_headers = {"Origin": probe_origin}
+
+    start = time.time()
+    with capture_output() as (out, err):
+        print(f"GET {url} (checking expose-headers)")
+        response, chain, req_err = _follow_to_final("GET", url, request_headers, timeout)
+
+        if req_err:
+            print(f"Request failed: {req_err}", file=sys.stderr)
+            duration = time.time() - start
+            return _result(case_name, url, error=f"Request failed: {req_err}",
+                           stdout=out.getvalue(), stderr=err.getvalue(), duration=duration)
+
+        raw = response.headers.get("access-control-expose-headers", "")
+        print(f"access-control-expose-headers: {raw!r}")
+        advertised = {h.strip().lower() for h in raw.split(",") if h.strip()}
+        required = {h.strip().lower() for h in expected_headers}
+
+        failure_message = None
+        failure_text = None
+
+        if not raw.strip():
+            failure_message = "Header 'access-control-expose-headers' is missing"
+            failure_text = f"Expected headers {sorted(required)} but header was absent"
+        else:
+            missing = required - advertised
+            if missing:
+                failure_message = "access-control-expose-headers is missing required headers"
+                failure_text = (
+                    f"Missing: {sorted(missing)}\n"
+                    f"Advertised: {sorted(advertised)}\n"
+                    f"Required: {sorted(required)}"
+                )
+
+    duration = time.time() - start
+    return _result(case_name, url, failure_message=failure_message, failure_text=failure_text,
+                   stdout=out.getvalue(), stderr=err.getvalue(), duration=duration)
+
+
+def run_https_redirect_test(url, probe_origin, expected_origin, timeout):
+    """
+    Test that HTTP redirects to HTTPS and that the final HTTPS response
+    still carries access-control-allow-origin.
+
+    expected_origin is the configured origin (or '*').
+    """
+    case_name = f"https_redirect [{url}]"
+
+    # Derive the HTTP version of the URL
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme == "https":
+        http_url = url.replace("https://", "http://", 1)
+    else:
+        http_url = url
+
+    request_headers = {"Origin": probe_origin}
+
+    start = time.time()
+    with capture_output() as (out, err):
+        print(f"GET {http_url} (checking https redirect)")
+        response, chain, req_err = _follow_to_final("GET", http_url, request_headers, timeout)
+
+        if req_err:
+            print(f"Request failed: {req_err}", file=sys.stderr)
+            duration = time.time() - start
+            return _result(case_name, url, error=f"Request failed: {req_err}",
+                           stdout=out.getvalue(), stderr=err.getvalue(), duration=duration)
+
+        failure_message = None
+        failure_text = None
+
+        # Check that the redirect chain contains an HTTP -> HTTPS hop
+        https_hop = next(
+            ((src, dst, code) for src, dst, code in chain
+             if urllib.parse.urlparse(src).scheme == "http"
+             and urllib.parse.urlparse(dst).scheme == "https"),
+            None,
+        )
+
+        if not https_hop:
+            final_scheme = urllib.parse.urlparse(response.url).scheme
+            failure_message = "No HTTP to HTTPS redirect detected"
+            failure_text = (
+                f"No redirect from http to https found in chain.\n"
+                f"Redirect chain: {chain}\n"
+                f"Final URL scheme: {final_scheme}"
+            )
+            print(failure_text)
+        else:
+            src, dst, code = https_hop
+            print(f"HTTP→HTTPS redirect: {src} → {dst} ({code})")
+
+            # Check that CORS header survived the redirect
+            actual_origin = response.headers.get("access-control-allow-origin", "").strip()
+            print(f"access-control-allow-origin after redirect: {actual_origin!r}")
+
+            if not actual_origin:
+                failure_message = "CORS header lost after HTTP→HTTPS redirect"
+                failure_text = (
+                    f"'access-control-allow-origin' absent from final response at {response.url}"
+                )
+            elif expected_origin == "*" and actual_origin != "*":
+                failure_message = "access-control-allow-origin incorrect after redirect"
+                failure_text = f"Expected '*' but got {actual_origin!r} at {response.url}"
+            elif expected_origin != "*" and actual_origin != expected_origin:
+                failure_message = "access-control-allow-origin incorrect after redirect"
+                failure_text = (
+                    f"Expected {expected_origin!r} but got {actual_origin!r} at {response.url}"
+                )
+
+    duration = time.time() - start
+    return _result(case_name, url, failure_message=failure_message, failure_text=failure_text,
+                   stdout=out.getvalue(), stderr=err.getvalue(), duration=duration)
+
+
+# ---------------------------------------------------------------------------
+# Per-URL orchestration
+# ---------------------------------------------------------------------------
+
+def run_tests_for_url(url, config):
+    results = []
+    timeout = config["timeout"]
+    probe_origin = config["probe_origin"]
+
+    # Determine the origin to use as the expected value for https_redirect check.
+    # If there are multiple specific origins, use the first one as representative.
+    representative_origin = config["origins"][0]
+
+    # Must: access-control-allow-origin (one test case per origin)
+    for origin in config["origins"]:
+        results.append(run_allow_origin_test(url, origin, probe_origin, timeout))
+
+    # Must: access-control-allow-methods
+    results.append(run_allow_methods_test(url, config["allow_methods"], timeout))
+
+    # Must: access-control-allow-headers
+    results.append(run_allow_headers_test(url, config["allow_headers"], timeout))
+
+    # Should: access-control-expose-headers
+    results.append(run_expose_headers_test(url, config["expose_headers"], probe_origin, timeout))
+
+    # Should: https-redirect
+    if config["https_redirect"]:
+        results.append(run_https_redirect_test(url, probe_origin, representative_origin, timeout))
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# JUnit report
+# ---------------------------------------------------------------------------
+
+def create_junit_report(suite_name, results, output_file, special_key_append_properties,
+                        provenance, suite_properties=None):
+    suite = TestSuite(suite_name)
+    suite.timestamp = datetime.now(timezone.utc).isoformat()
+    if suite_properties is None:
+        suite_properties = {}
+    total_time = 0.0
+    added_properties = set()
+    append_properties = {}
+
+    for result in results:
+        case = TestCase(result["case_name"], classname=suite_name)
+        case.time = result["duration"]
+        total_time += result["duration"]
+
+        for key, value in result["properties"].items():
+            if key in special_key_append_properties:
+                if key not in append_properties:
+                    append_properties[key] = []
+                append_properties[key].append(value)
+            elif key not in added_properties:
+                suite.add_property(key, value)
+                added_properties.add(key)
+
+        if result["skipped"]:
+            case.result = [Skipped(message=result["skipped_message"])]
+        else:
+            if result["error"] is not None:
+                err = Error(message="Unexpected error")
+                err.text = str(result["error"])
+                case.result = [err]
+            elif result["failure_message"]:
+                failure = Failure(message=result["failure_message"])
+                failure.text = result["failure_text"]
+                case.result = [failure]
+            if result.get("stdout"):
+                case.system_out = result["stdout"]
+            if result.get("stderr"):
+                case.system_err = result["stderr"]
+
+        suite.add_testcase(case)
+
+    for key, values in append_properties.items():
+        seen = dict.fromkeys(str(v) for v in values if v is not None and str(v) != "")
+        if seen:
+            suite.add_property(key, ", ".join(seen))
+
+    if (timeout := suite_properties.get("timeout")) is not None:
+        suite.add_property("timeout", str(timeout))
+    if (origins := suite_properties.get("origins")) is not None:
+        suite.add_property("access-control-allow-origin", ", ".join(origins))
+    if (allow_methods := suite_properties.get("allow_methods")) is not None:
+        suite.add_property("access-control-allow-methods", ", ".join(allow_methods))
+    if (allow_headers := suite_properties.get("allow_headers")) is not None:
+        suite.add_property("access-control-allow-headers", ", ".join(allow_headers))
+    if (expose_headers := suite_properties.get("expose_headers")) is not None:
+        suite.add_property("access-control-expose-headers", ", ".join(expose_headers))
+    if (https_redirect := suite_properties.get("https_redirect")) is not None:
+        suite.add_property("https-redirect", str(https_redirect).lower())
+    if (probe_origin := suite_properties.get("probe_origin")) is not None:
+        suite.add_property("probe-origin", probe_origin)
+    suite.add_property("provenance", provenance)
+    suite.time = total_time
+    xml = JUnitXml()
+    xml.add_testsuite(suite)
+    xml.write(output_file)
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    suite_name = os.environ.get("TS_NAME", "cors-compliance")
+    config = parse_config()
+
+    if not config["urls"]:
+        results = [skipped_test("cors_compliance", "No URL(s) configured")]
+    else:
+        results = []
+        for url in config["urls"]:
+            results.extend(run_tests_for_url(url, config))
+
+    report_path = f"/reports/{suite_name}_report.xml"
+    create_junit_report(
+        suite_name, results, output_file=report_path,
+        special_key_append_properties={"urls", "hostnames"},
+        provenance=config["provenance"],
+        suite_properties=config,
+    )
