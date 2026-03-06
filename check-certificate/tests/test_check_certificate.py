@@ -541,3 +541,27 @@ class TestCreateJunitReport:
         out = str(tmp_path / "report.xml")
         create_junit_report("suite", [], out, set(), "prov")
         assert os.path.exists(out)
+
+    def test_timeout_property_present_in_xml(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        create_junit_report("suite", [self._result()], out, set(), "prov",
+                            suite_properties={"timeout": 60, "expiry_days": 14})
+        content = open(out).read()
+        assert 'name="timeout"' in content
+        assert '"60"' in content
+
+    def test_certificate_expiry_days_property_present_in_xml(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        create_junit_report("suite", [self._result()], out, set(), "prov",
+                            suite_properties={"timeout": 60, "expiry_days": 14})
+        content = open(out).read()
+        assert 'name="certificate-expiry-days"' in content
+        assert '"14"' in content
+
+    def test_suite_properties_absent_does_not_crash(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        create_junit_report("suite", [self._result()], out, set(), "prov")
+        content = open(out).read()
+        assert os.path.exists(out)
+        assert 'name="timeout"' not in content
+        assert 'name="certificate-expiry-days"' not in content

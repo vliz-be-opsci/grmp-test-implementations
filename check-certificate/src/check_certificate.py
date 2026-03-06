@@ -215,9 +215,11 @@ def run_tests_for_url(url, config):
     return [run_expiry_test(url, config["timeout"], config["expiry_days"])]
 
 
-def create_junit_report(suite_name, results, output_file, special_key_append_properties, providence):
+def create_junit_report(suite_name, results, output_file, special_key_append_properties, providence, suite_properties=None):
     suite = TestSuite(suite_name)
     suite.timestamp = datetime.now(timezone.utc).isoformat()
+    if suite_properties is None:
+        suite_properties = {}
     total_time = 0.0
     added_properties = set()
     append_properties = {}
@@ -259,6 +261,10 @@ def create_junit_report(suite_name, results, output_file, special_key_append_pro
         if normalized_values:
             suite.add_property(key, ", ".join(normalized_values))
 
+    if (timeout := suite_properties.get("timeout")) is not None:
+        suite.add_property("timeout", str(timeout))
+    if (expiry_days := suite_properties.get("expiry_days")) is not None:
+        suite.add_property("certificate-expiry-days", str(expiry_days))
     suite.add_property("providence", providence)
     suite.time = total_time
     xml = JUnitXml()
@@ -282,4 +288,5 @@ if __name__ == "__main__":
         suite_name, results, output_file=report_path,
         special_key_append_properties={"urls", "hostnames"},
         providence=config["providence"],
+        suite_properties=config,
     )
