@@ -450,6 +450,22 @@ class TestParseConfig:
         monkeypatch.setenv("TEST_CERTIFICATE-EXPIRY-DAYS", "not-a-number")
         assert parse_config()["expiry_days"] == 30
 
+    def test_zero_timeout_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_TIMEOUT", "0")
+        assert parse_config()["timeout"] == 30
+
+    def test_negative_timeout_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_TIMEOUT", "-1")
+        assert parse_config()["timeout"] == 30
+
+    def test_negative_expiry_days_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_CERTIFICATE-EXPIRY-DAYS", "-1")
+        assert parse_config()["expiry_days"] == 30
+
+    def test_zero_expiry_days_is_valid(self, monkeypatch):
+        monkeypatch.setenv("TEST_CERTIFICATE-EXPIRY-DAYS", "0")
+        assert parse_config()["expiry_days"] == 0
+
 
 # ---------------------------------------------------------------------------
 # create_junit_report

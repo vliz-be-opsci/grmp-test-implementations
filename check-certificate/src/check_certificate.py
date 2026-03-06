@@ -27,13 +27,20 @@ def capture_output():
         yield out, err
 
 
-def _parse_int_env(name, default):
+def _parse_int_env(name, default, *, minimum=None):
     raw = os.environ.get(name, str(default))
     try:
-        return int(raw)
+        value = int(raw)
     except ValueError:
         print(f"Invalid {name}={raw!r}; falling back to {default}", file=sys.stderr)
         return default
+    if minimum is not None and value < minimum:
+        print(
+            f"Invalid {name}={raw!r}; must be >= {minimum}. Falling back to {default}",
+            file=sys.stderr,
+        )
+        return default
+    return value
 
 
 def parse_config():
@@ -52,8 +59,8 @@ def parse_config():
 
     return {
         "urls": urls,
-        "timeout": _parse_int_env("TEST_TIMEOUT", 30),
-        "expiry_days": _parse_int_env("TEST_CERTIFICATE-EXPIRY-DAYS", 30),
+        "timeout": _parse_int_env("TEST_TIMEOUT", 30, minimum=1),
+        "expiry_days": _parse_int_env("TEST_CERTIFICATE-EXPIRY-DAYS", 30, minimum=0),
         "providence": os.environ.get("SPECIAL_SOURCE_FILE", "unknown"),
     }
 
