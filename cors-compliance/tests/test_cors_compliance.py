@@ -503,6 +503,27 @@ class TestRunHttpsRedirectTest:
         assert result["error"] is not None
         assert result["failure_message"] is None
 
+    def test_lenient_passes_when_wildcard_returned_after_redirect(self):
+        resp = make_response(200, headers={"access-control-allow-origin": "*"}, url="https://example.com")
+        chain = [("http://example.com", "https://example.com", 301)]
+        with patch("cors_compliance._follow_to_final", return_value=(resp, chain, None)):
+            result = run_https_redirect_test("https://example.com", "https://vliz.be", None, 10)
+        assert result["failure_message"] is None
+
+    def test_lenient_passes_when_probe_origin_reflected_after_redirect(self):
+        resp = make_response(200, headers={"access-control-allow-origin": "https://vliz.be"}, url="https://example.com")
+        chain = [("http://example.com", "https://example.com", 301)]
+        with patch("cors_compliance._follow_to_final", return_value=(resp, chain, None)):
+            result = run_https_redirect_test("https://example.com", "https://vliz.be", None, 10)
+        assert result["failure_message"] is None
+
+    def test_lenient_fails_when_arbitrary_origin_returned_after_redirect(self):
+        resp = make_response(200, headers={"access-control-allow-origin": "https://malicious.com"}, url="https://example.com")
+        chain = [("http://example.com", "https://example.com", 301)]
+        with patch("cors_compliance._follow_to_final", return_value=(resp, chain, None)):
+            result = run_https_redirect_test("https://example.com", "https://vliz.be", None, 10)
+        assert result["failure_message"] is not None
+
 
 # ---------------------------------------------------------------------------
 # run_tests_for_url

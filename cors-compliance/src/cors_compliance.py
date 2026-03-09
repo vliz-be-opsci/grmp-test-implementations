@@ -518,6 +518,14 @@ def run_https_redirect_test(url, probe_origin, expected_origin, timeout):
                 failure_text = (
                     f"'access-control-allow-origin' absent from final response at {response.url}"
                 )
+            elif expected_origin is None:
+                # Lenient mode: accept '*' or the probe origin, same as run_allow_origin_test
+                if actual_origin != "*" and actual_origin != probe_origin:
+                    failure_message = "access-control-allow-origin incorrect after redirect"
+                    failure_text = (
+                        f"Expected '*' or {probe_origin!r} but got {actual_origin!r} "
+                        f"at {response.url}"
+                    )
             elif expected_origin == "*" and actual_origin != "*":
                 failure_message = "access-control-allow-origin incorrect after redirect"
                 failure_text = f"Expected '*' but got {actual_origin!r} at {response.url}"
