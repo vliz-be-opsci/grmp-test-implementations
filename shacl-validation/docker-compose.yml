@@ -1,0 +1,20 @@
+services:
+  shaclvalidation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shaclvalidation
+    volumes:
+      - ./reports:/reports:rw
+    environment:
+      - TS_NAME=localtestrun
+      - TEST_DATA_URLS=['https://example.org/data1', 'https://example.org/data2']
+      - TEST_SHAPES_URL=https://example.org/shapes.ttl
+      - TEST_TIMEOUT=30
+    working_dir: /app
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge
