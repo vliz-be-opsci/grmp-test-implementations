@@ -1,0 +1,18 @@
+services:
+  semanticharvest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: semanticharvest
+    volumes:
+      - ./reports:/reports:rw
+    environment:
+      - TS_NAME=localtestrun
+      - TEST_URLS=['https://schema.org/', 'https://www.w3.org/TR/rdf-syntax-grammar/']
+    working_dir: /app
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge

@@ -42,3 +42,12 @@ Checks CORS header compliance for one or more URLs. For each URL it tests:
 5) whether HTTP redirects to HTTPS and whether CORS headers survive the redirect (optional)
 
 Origin and method/header checks use an OPTIONS preflight request; expose-header checks use a GET request. SSL certificate validity is intentionally not checked as that is the responsibility of the Check Certificate test. It then creates a JUNIT XML file containing the results and adds the tested URLs, hostnames and all configuration parameters as testsuite properties.
+
+### 5 Semantic Harvest
+
+Tests if specified URLs can be harvested for semantic metadata (RDF graphs) using the `py-sema` library. For each URL it tests:
+
+1) whether an RDF graph can be extracted without errors
+2) whether the harvested RDF graph is non-empty (contains at least one triple)
+
+Harvesting is attempted across multiple RDF content types (JSON-LD, Turtle, RDF/XML, N-Triples, HTML). The list of formats is configurable. It then creates a JUNIT XML file containing the results and adds the tested URLs as testsuite properties.

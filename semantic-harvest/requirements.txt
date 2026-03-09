@@ -1,0 +1,3 @@
+git+https://github.com/vliz-be-opsci/py-sema.git
+junitparser>=3.0.0
+rdflib
