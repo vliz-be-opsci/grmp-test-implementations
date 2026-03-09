@@ -119,13 +119,13 @@ def parse_config():
         "urls": urls,
         "origins": origins,
         "allow_methods": _parse_list_env(
-            "TEST_ACCESS-CONTROL-ALLOW-METHODS", ["GET", "HEAD", "OPTIONS"]
+            "TEST_ACCESS-CONTROL-ALLOW-METHODS", None
         ),
         "allow_headers": _parse_list_env(
-            "TEST_ACCESS-CONTROL-ALLOW-HEADERS", ["Accept"]
+            "TEST_ACCESS-CONTROL-ALLOW-HEADERS", None
         ),
         "expose_headers": _parse_list_env(
-            "TEST_ACCESS-CONTROL-EXPOSE-HEADERS", ["Content-Type", "Link"]
+            "TEST_ACCESS-CONTROL-EXPOSE-HEADERS", None
         ),
         "https_redirect": os.environ.get("TEST_HTTPS-REDIRECT", "false").lower() == "true",
         "probe_origin": os.environ.get("TEST_PROBE-ORIGIN", "https://vliz.be"),
@@ -601,14 +601,17 @@ def run_tests_for_url(url, config):
     for origin in (config["origins"] or [None]):
         results.append(run_allow_origin_test(url, origin, probe_origin, timeout))
 
-    # Must: access-control-allow-methods
-    results.append(run_allow_methods_test(url, config["allow_methods"], timeout))
+    # Optional: access-control-allow-methods
+    if config["allow_methods"] is not None:
+        results.append(run_allow_methods_test(url, config["allow_methods"], timeout))
 
-    # Must: access-control-allow-headers
-    results.append(run_allow_headers_test(url, config["allow_headers"], timeout))
+    # Optional: access-control-allow-headers
+    if config["allow_headers"] is not None:
+        results.append(run_allow_headers_test(url, config["allow_headers"], timeout))
 
-    # Should: access-control-expose-headers
-    results.append(run_expose_headers_test(url, config["expose_headers"], probe_origin, timeout))
+    # Optional: access-control-expose-headers
+    if config["expose_headers"] is not None:
+        results.append(run_expose_headers_test(url, config["expose_headers"], probe_origin, timeout))
 
     # Should: https-redirect
     if config["https_redirect"]:
