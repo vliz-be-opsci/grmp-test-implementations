@@ -42,3 +42,13 @@ Checks CORS header compliance for one or more URLs. For each URL it tests:
 5) whether HTTP redirects to HTTPS and whether CORS headers survive the redirect (optional)
 
 Origin and method/header checks use an OPTIONS preflight request; expose-header checks use a GET request. SSL certificate validity is intentionally not checked as that is the responsibility of the Check Certificate test. It then creates a JUNIT XML file containing the results and adds the tested URLs, hostnames and all configuration parameters as testsuite properties.
+
+### 5 SHACL Validation
+
+Checks whether RDF graphs harvested from one or more data URLs conform to a given SHACL shapes graph. For each data URL it:
+
+1) harvests the data URL into an RDF graph using the `py-sema` library
+2) validates the data graph against the SHACL shapes graph using `pyshacl`
+3) reports conformance (pass) or non-conformance with the validation report text (fail)
+
+The shapes graph is harvested once from the configured `TEST_SHAPES_URL`. It then creates a JUNIT XML file containing the results and adds the shapes URL and all tested data URLs as testsuite properties.
