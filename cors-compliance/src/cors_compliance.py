@@ -86,11 +86,15 @@ def _parse_list_env(name, default):
 def _parse_origins(raw_origins):
     """
     Validate the parsed list of origins.
-    Returns (origins, error) where error is a string or None.
+    Returns (origins, error) where:
+      - origins is None  → lenient mode: accept '*' or probe origin in response
+      - origins is a list → strict mode: each origin is checked individually
     A list mixing '*' with specific origins is rejected.
     """
+    if raw_origins is None:
+        return None, None
     if not raw_origins:
-        return ["*"], None
+        return None, None
     has_wildcard = "*" in raw_origins
     has_specific = any(o != "*" for o in raw_origins)
     if has_wildcard and has_specific:
@@ -102,11 +106,11 @@ def parse_config():
     raw_urls = _parse_list_env("TEST_URLS", [])
     urls = [u for u in raw_urls if isinstance(u, str) and u]
 
-    raw_origins = _parse_list_env("TEST_ACCESS-CONTROL-ALLOW-ORIGIN", ["*"])
+    raw_origins = _parse_list_env("TEST_ACCESS-CONTROL-ALLOW-ORIGIN", None)
     origins, origin_error = _parse_origins(raw_origins)
     if origin_error:
-        print(f"Config error: {origin_error}. Falling back to ['*']", file=sys.stderr)
-        origins = ["*"]
+        print(f"Config error: {origin_error}. Falling back to lenient mode", file=sys.stderr)
+        origins = None
 
     return {
         "urls": urls,
@@ -230,6 +234,25 @@ def _hostname(url):
         return ""
 
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+def _origin_tuple(url):
+    """
+    Return a (scheme, hostname, port) tuple for origin comparison.
+    Explicit default ports are normalised to None so that
+    https://example.com and https://example.com:443 compare as equal.
+    """
+    try:
+        p = urllib.parse.urlparse(url)
+        scheme = p.scheme.lower()
+        port = p.port
+        if port == _DEFAULT_PORTS.get(scheme):
+            port = None
+        return (scheme, p.hostname or "", port)
+    except Exception:
+        return ("", "", None)
+
+
 # ---------------------------------------------------------------------------
 # Individual test runners
 # ---------------------------------------------------------------------------
@@ -237,11 +260,18 @@ def _hostname(url):
 def run_allow_origin_test(url, origin, probe_origin, timeout):
     """
     Test access-control-allow-origin for a single URL/origin combination.
-    If origin is '*', sends the probe_origin and expects '*' back.
-    Otherwise sends the origin itself and expects it reflected back.
+
+    Three modes depending on the value of origin:
+      - None (lenient): sends probe_origin, accepts '*' or probe_origin in response
+      - '*' (wildcard):  sends probe_origin, asserts response is exactly '*'
+      - '<domain>' (specific): sends that domain, asserts it is reflected back exactly
+
+    In the specific domain case, probe_origin is ignored — the domain is both
+    the sent Origin and the expected response value, since a server configured
+    to allow only that domain will only reflect it back if it receives it.
     """
-    case_name = f"access_control_allow_origin [{url}] [{origin}]"
-    sending_origin = probe_origin if origin == "*" else origin
+    case_name = f"access_control_allow_origin [{url}] [{'lenient' if origin is None else origin}]"
+    sending_origin = origin if (origin is not None and origin != "*") else probe_origin
     request_headers = {"Origin": sending_origin}
 
     start = time.time()
@@ -267,8 +297,15 @@ def run_allow_origin_test(url, origin, probe_origin, timeout):
         if not actual:
             failure_message = "Header 'access-control-allow-origin' is missing"
             failure_text = (
-                f"Expected {origin!r} but header was absent in response from {response.url}"
+                f"Header absent in response from {response.url}"
             )
+        elif origin is None:
+            # Lenient mode: accept either wildcard or the probe origin being reflected
+            if actual != "*" and actual != probe_origin:
+                failure_message = "access-control-allow-origin does not recognise the probe origin"
+                failure_text = (
+                    f"Expected '*' or {probe_origin!r} but got {actual!r}"
+                )
         elif origin == "*" and actual != "*":
             failure_message = "access-control-allow-origin does not allow all origins"
             failure_text = f"Expected '*' but got {actual!r}"
@@ -481,6 +518,14 @@ def run_https_redirect_test(url, probe_origin, expected_origin, timeout):
                 failure_text = (
                     f"'access-control-allow-origin' absent from final response at {response.url}"
                 )
+            elif expected_origin is None:
+                # Lenient mode: accept '*' or the probe origin, same as run_allow_origin_test
+                if actual_origin != "*" and actual_origin != probe_origin:
+                    failure_message = "access-control-allow-origin incorrect after redirect"
+                    failure_text = (
+                        f"Expected '*' or {probe_origin!r} but got {actual_origin!r} "
+                        f"at {response.url}"
+                    )
             elif expected_origin == "*" and actual_origin != "*":
                 failure_message = "access-control-allow-origin incorrect after redirect"
                 failure_text = f"Expected '*' but got {actual_origin!r} at {response.url}"
@@ -500,16 +545,34 @@ def run_https_redirect_test(url, probe_origin, expected_origin, timeout):
 # ---------------------------------------------------------------------------
 
 def run_tests_for_url(url, config):
+    probe_origin = config["probe_origin"]
+
+    # Safety check: probe-origin must not be the same origin as the URL being tested.
+    # A server that only returns CORS headers when the Origin matches its own origin
+    # is severely misconfigured — same-origin requests bypass CORS entirely, so such
+    # a server effectively supports no cross-origin access at all. Allowing the probe
+    # origin to equal the resource origin would mask this misconfiguration.
+    # Origin identity is defined as scheme + hostname + port, matching browser semantics.
+    url_origin = _origin_tuple(url)
+    probe_origin_tuple = _origin_tuple(probe_origin)
+    if url_origin[0] and url_origin[1] and url_origin == probe_origin_tuple:
+        return [skipped_test(
+            f"cors_compliance [{url}]",
+            f"probe-origin ({probe_origin!r}) must not be the same origin as the URL. "
+            f"Set probe-origin to an external origin to avoid masking server misconfigurations.",
+        )]
+
     results = []
     timeout = config["timeout"]
-    probe_origin = config["probe_origin"]
 
     # Determine the origin to use as the expected value for https_redirect check.
     # If there are multiple specific origins, use the first one as representative.
-    representative_origin = config["origins"][0]
+    representative_origin = config["origins"][0] if config["origins"] else None
 
-    # Must: access-control-allow-origin (one test case per origin)
-    for origin in config["origins"]:
+    # Must: access-control-allow-origin
+    # Lenient mode (origins is None) produces a single test case.
+    # Strict mode produces one test case per configured origin.
+    for origin in (config["origins"] or [None]):
         results.append(run_allow_origin_test(url, origin, probe_origin, timeout))
 
     # Must: access-control-allow-methods
