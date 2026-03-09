@@ -53,9 +53,9 @@ def _config(**overrides):
         "timeout": 10,
         "probe_origin": "https://vliz.be",
         "origins": ["*"],
-        "allow_methods": ["GET", "HEAD", "OPTIONS"],
-        "allow_headers": ["Accept"],
-        "expose_headers": ["Content-Type", "Link"],
+        "allow_methods": None,
+        "allow_headers": None,
+        "expose_headers": None,
         "https_redirect": False,
     }
     base.update(overrides)
@@ -155,9 +155,9 @@ class TestParseConfig:
         config = parse_config()
         assert config["urls"] == []
         assert config["origins"] is None  # lenient mode by default
-        assert config["allow_methods"] == ["GET", "HEAD", "OPTIONS"]
-        assert config["allow_headers"] == ["Accept"]
-        assert config["expose_headers"] == ["Content-Type", "Link"]
+        assert config["allow_methods"] is None
+        assert config["allow_headers"] is None
+        assert config["expose_headers"] is None
         assert config["https_redirect"] is False
         assert config["probe_origin"] == "https://vliz.be"
         assert config["timeout"] == 30
@@ -582,19 +582,60 @@ class TestRunTestsForUrl:
             "access-control-expose-headers": "Content-Type, Link",
         })
 
-    def test_produces_four_results_without_redirect(self):
+    def test_produces_one_result_when_only_origin_configured(self):
         resp = self._mock_passing_response()
         with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
-            # origins=None (lenient) → one origin test case
-            results = run_tests_for_url("https://example.com", _config(origins=None, https_redirect=False))
+            results = run_tests_for_url(
+                "https://example.com",
+                _config(origins=None, allow_methods=None, allow_headers=None,
+                        expose_headers=None, https_redirect=False)
+            )
+        assert len(results) == 1
+
+    def test_produces_four_results_when_all_optional_configured(self):
+        resp = self._mock_passing_response()
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
+            results = run_tests_for_url(
+                "https://example.com",
+                _config(origins=None, allow_methods=["GET"], allow_headers=["Accept"],
+                        expose_headers=["Content-Type"], https_redirect=False)
+            )
         assert len(results) == 4
 
-    def test_produces_five_results_with_redirect(self):
+    def test_produces_five_results_with_redirect_and_all_optional_configured(self):
         resp = self._mock_passing_response()
         chain = [("http://example.com", "https://example.com", 301)]
         with patch("cors_compliance._follow_to_final", return_value=(resp, chain, [], None)):
-            results = run_tests_for_url("https://example.com", _config(https_redirect=True))
+            results = run_tests_for_url(
+                "https://example.com",
+                _config(allow_methods=["GET"], allow_headers=["Accept"],
+                        expose_headers=["Content-Type"], https_redirect=True)
+            )
         assert len(results) == 5
+
+    def test_omits_allow_methods_when_not_configured(self):
+        resp = self._mock_passing_response()
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
+            results = run_tests_for_url(
+                "https://example.com", _config(allow_methods=None)
+            )
+        assert not any("allow_methods" in r["case_name"] for r in results)
+
+    def test_omits_allow_headers_when_not_configured(self):
+        resp = self._mock_passing_response()
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
+            results = run_tests_for_url(
+                "https://example.com", _config(allow_headers=None)
+            )
+        assert not any("allow_headers" in r["case_name"] for r in results)
+
+    def test_omits_expose_headers_when_not_configured(self):
+        resp = self._mock_passing_response()
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
+            results = run_tests_for_url(
+                "https://example.com", _config(expose_headers=None)
+            )
+        assert not any("expose_headers" in r["case_name"] for r in results)
 
     def test_produces_one_origin_result_per_origin(self):
         resp = self._mock_passing_response("https://vliz.be")
