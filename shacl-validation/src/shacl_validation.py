@@ -67,7 +67,20 @@ def parse_config():
 def harvest_graph(url):
     """Harvest a URL into an rdflib Graph. Returns (graph, error)."""
     try:
-        graph = url_to_graph(url)
+        if callable(url_to_graph):
+            graph = url_to_graph(url)
+        elif hasattr(url_to_graph, "get_graph_for_format"):
+            graph = url_to_graph.get_graph_for_format(
+                url,
+                [
+                    "text/turtle",
+                    "application/ld+json",
+                    "application/rdf+xml",
+                    "application/n-triples",
+                ],
+            )
+        else:
+            raise TypeError("Unsupported sema.harvest.url_to_graph API")
         return graph, None
     except Exception as e:
         return None, str(e)
