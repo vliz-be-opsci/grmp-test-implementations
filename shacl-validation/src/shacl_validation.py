@@ -52,7 +52,9 @@ def parse_config():
     if isinstance(parsed_urls, str):
         parsed_urls = [parsed_urls]
     elif not isinstance(parsed_urls, (list, tuple)):
-        raise ValueError("TEST_DATA_URLS must be a URL string or list/tuple of URL strings")
+        raise ValueError(
+            "TEST_DATA_URLS must be a URL string or list/tuple of URL strings"
+        )
 
     data_urls = [u for u in parsed_urls if isinstance(u, str) and u]
 
@@ -126,7 +128,10 @@ def run_shacl_test(data_url, shapes_graph):
                 if conforms:
                     print("SHACL validation passed: data graph conforms to shapes")
                 else:
-                    print("SHACL validation failed: data graph does not conform", file=sys.stderr)
+                    print(
+                        "SHACL validation failed: data graph does not conform",
+                        file=sys.stderr,
+                    )
                     failure_message = "SHACL validation failed"
                     failure_text = results_text
             except Exception as e:
@@ -198,7 +203,9 @@ if __name__ == "__main__":
     config = parse_config()
 
     if not config["data_urls"] or not config["shapes_url"]:
-        results = [skipped_test("shacl_validation", "No data_urls or shapes_url configured")]
+        results = [
+            skipped_test("shacl_validation", "No data_urls or shapes_url configured")
+        ]
         shapes_url = config.get("shapes_url", "")
     else:
         # Harvest shapes graph once
