@@ -65,7 +65,10 @@ def _parse_list_env(name, default):
     """
     Parse an env variable expected to be a Python list literal, e.g. "['a', 'b']".
     Falls back to default (a list) on any parse error.
-    A bare string is wrapped in a list for convenience.
+    A bare string (one that is not a valid Python literal, such as a plain '*' or
+    an unquoted domain) is treated as a single-element list as a convenience, so
+    that YAML scalar values like `access-control-allow-origin: '*'` work without
+    requiring the operator to add extra quoting.
     """
     raw = os.environ.get(name)
     if raw is None:
@@ -73,8 +76,8 @@ def _parse_list_env(name, default):
     try:
         parsed = ast.literal_eval(raw)
     except (ValueError, SyntaxError):
-        print(f"Invalid {name}={raw!r}; falling back to default", file=sys.stderr)
-        return default
+        # Not a Python literal — treat the raw string itself as a single value.
+        return [raw]
     if isinstance(parsed, str):
         return [parsed]
     if isinstance(parsed, (list, tuple)):
@@ -86,11 +89,15 @@ def _parse_list_env(name, default):
 def _parse_origins(raw_origins):
     """
     Validate the parsed list of origins.
-    Returns (origins, error) where error is a string or None.
+    Returns (origins, error) where:
+      - origins is None  → lenient mode: accept '*' or probe origin in response
+      - origins is a list → strict mode: each origin is checked individually
     A list mixing '*' with specific origins is rejected.
     """
+    if raw_origins is None:
+        return None, None
     if not raw_origins:
-        return ["*"], None
+        return None, None
     has_wildcard = "*" in raw_origins
     has_specific = any(o != "*" for o in raw_origins)
     if has_wildcard and has_specific:
@@ -102,23 +109,23 @@ def parse_config():
     raw_urls = _parse_list_env("TEST_URLS", [])
     urls = [u for u in raw_urls if isinstance(u, str) and u]
 
-    raw_origins = _parse_list_env("TEST_ACCESS-CONTROL-ALLOW-ORIGIN", ["*"])
+    raw_origins = _parse_list_env("TEST_ACCESS-CONTROL-ALLOW-ORIGIN", None)
     origins, origin_error = _parse_origins(raw_origins)
     if origin_error:
-        print(f"Config error: {origin_error}. Falling back to ['*']", file=sys.stderr)
-        origins = ["*"]
+        print(f"Config error: {origin_error}. Falling back to lenient mode", file=sys.stderr)
+        origins = None
 
     return {
         "urls": urls,
         "origins": origins,
         "allow_methods": _parse_list_env(
-            "TEST_ACCESS-CONTROL-ALLOW-METHODS", ["GET", "HEAD", "OPTIONS"]
+            "TEST_ACCESS-CONTROL-ALLOW-METHODS", None
         ),
         "allow_headers": _parse_list_env(
-            "TEST_ACCESS-CONTROL-ALLOW-HEADERS", ["Accept"]
+            "TEST_ACCESS-CONTROL-ALLOW-HEADERS", None
         ),
         "expose_headers": _parse_list_env(
-            "TEST_ACCESS-CONTROL-EXPOSE-HEADERS", ["Content-Type", "Link"]
+            "TEST_ACCESS-CONTROL-EXPOSE-HEADERS", None
         ),
         "https_redirect": os.environ.get("TEST_HTTPS-REDIRECT", "false").lower() == "true",
         "probe_origin": os.environ.get("TEST_PROBE-ORIGIN", "https://vliz.be"),
@@ -166,36 +173,40 @@ def _request(method, url, headers, timeout, allow_redirects=True):
 
 def _follow_to_final(method, url, request_headers, timeout):
     """
-    Follow redirects manually, returning the final response.
-    Returns (final_response, redirect_chain, error_string).
+    Follow redirects manually, returning the final response and all intermediate responses.
+    Returns (final_response, redirect_chain, hop_responses, error_string).
     redirect_chain is a list of (from_url, to_url, status_code) tuples.
+    hop_responses is a list of (url, response) pairs for every redirect response in order,
+    not including the final non-redirect response (which is returned as final_response).
     """
     current_url = url
     chain = []
+    hop_responses = []
     seen = set()
     max_hops = 10
 
     for _ in range(max_hops):
         if current_url in seen:
-            return None, chain, f"Redirect loop detected at {current_url}"
+            return None, chain, hop_responses, f"Redirect loop detected at {current_url}"
         seen.add(current_url)
 
         response, err = _request(method, current_url, request_headers, timeout, allow_redirects=False)
         if err:
-            return None, chain, err
+            return None, chain, hop_responses, err
 
         if response.status_code in (301, 302, 303, 307, 308):
             location = response.headers.get("Location")
             if not location:
-                return None, chain, f"Redirect response {response.status_code} missing Location header"
+                return None, chain, hop_responses, f"Redirect response {response.status_code} missing Location header"
             # Resolve relative redirects
             next_url = urllib.parse.urljoin(current_url, location)
             chain.append((current_url, next_url, response.status_code))
+            hop_responses.append((current_url, response))
             current_url = next_url
         else:
-            return response, chain, None
+            return response, chain, hop_responses, None
 
-    return None, chain, f"Too many redirects (>{max_hops})"
+    return None, chain, hop_responses, f"Too many redirects (>{max_hops})"
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +241,25 @@ def _hostname(url):
         return ""
 
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+def _origin_tuple(url):
+    """
+    Return a (scheme, hostname, port) tuple for origin comparison.
+    Explicit default ports are normalised to None so that
+    https://example.com and https://example.com:443 compare as equal.
+    """
+    try:
+        p = urllib.parse.urlparse(url)
+        scheme = p.scheme.lower()
+        port = p.port
+        if port == _DEFAULT_PORTS.get(scheme):
+            port = None
+        return (scheme, p.hostname or "", port)
+    except Exception:
+        return ("", "", None)
+
+
 # ---------------------------------------------------------------------------
 # Individual test runners
 # ---------------------------------------------------------------------------
@@ -237,17 +267,24 @@ def _hostname(url):
 def run_allow_origin_test(url, origin, probe_origin, timeout):
     """
     Test access-control-allow-origin for a single URL/origin combination.
-    If origin is '*', sends the probe_origin and expects '*' back.
-    Otherwise sends the origin itself and expects it reflected back.
+
+    Three modes depending on the value of origin:
+      - None (lenient): sends probe_origin, accepts '*' or probe_origin in response
+      - '*' (wildcard):  sends probe_origin, asserts response is exactly '*'
+      - '<domain>' (specific): sends that domain, asserts it is reflected back exactly
+
+    In the specific domain case, probe_origin is ignored — the domain is both
+    the sent Origin and the expected response value, since a server configured
+    to allow only that domain will only reflect it back if it receives it.
     """
-    case_name = f"access_control_allow_origin [{url}] [{origin}]"
-    sending_origin = probe_origin if origin == "*" else origin
+    case_name = f"access_control_allow_origin [{url}] [{'lenient' if origin is None else origin}]"
+    sending_origin = origin if (origin is not None and origin != "*") else probe_origin
     request_headers = {"Origin": sending_origin}
 
     start = time.time()
     with capture_output() as (out, err):
         print(f"OPTIONS {url} with Origin: {sending_origin}")
-        response, chain, req_err = _follow_to_final("OPTIONS", url, request_headers, timeout)
+        response, chain, _, req_err = _follow_to_final("OPTIONS", url, request_headers, timeout)
 
         if req_err:
             print(f"Request failed: {req_err}", file=sys.stderr)
@@ -267,8 +304,15 @@ def run_allow_origin_test(url, origin, probe_origin, timeout):
         if not actual:
             failure_message = "Header 'access-control-allow-origin' is missing"
             failure_text = (
-                f"Expected {origin!r} but header was absent in response from {response.url}"
+                f"Header absent in response from {response.url}"
             )
+        elif origin is None:
+            # Lenient mode: accept either wildcard or the probe origin being reflected
+            if actual != "*" and actual != probe_origin:
+                failure_message = "access-control-allow-origin does not recognise the probe origin"
+                failure_text = (
+                    f"Expected '*' or {probe_origin!r} but got {actual!r}"
+                )
         elif origin == "*" and actual != "*":
             failure_message = "access-control-allow-origin does not allow all origins"
             failure_text = f"Expected '*' but got {actual!r}"
@@ -292,7 +336,7 @@ def run_allow_methods_test(url, expected_methods, timeout):
     start = time.time()
     with capture_output() as (out, err):
         print(f"OPTIONS {url} (checking allow-methods)")
-        response, chain, req_err = _follow_to_final("OPTIONS", url, request_headers, timeout)
+        response, chain, _, req_err = _follow_to_final("OPTIONS", url, request_headers, timeout)
 
         if req_err:
             print(f"Request failed: {req_err}", file=sys.stderr)
@@ -340,7 +384,7 @@ def run_allow_headers_test(url, expected_headers, timeout):
     start = time.time()
     with capture_output() as (out, err):
         print(f"OPTIONS {url} (checking allow-headers)")
-        response, chain, req_err = _follow_to_final("OPTIONS", url, request_headers, timeout)
+        response, chain, _, req_err = _follow_to_final("OPTIONS", url, request_headers, timeout)
 
         if req_err:
             print(f"Request failed: {req_err}", file=sys.stderr)
@@ -385,7 +429,7 @@ def run_expose_headers_test(url, expected_headers, probe_origin, timeout):
     start = time.time()
     with capture_output() as (out, err):
         print(f"GET {url} (checking expose-headers)")
-        response, chain, req_err = _follow_to_final("GET", url, request_headers, timeout)
+        response, chain, _, req_err = _follow_to_final("GET", url, request_headers, timeout)
 
         if req_err:
             print(f"Request failed: {req_err}", file=sys.stderr)
@@ -419,28 +463,59 @@ def run_expose_headers_test(url, expected_headers, probe_origin, timeout):
                    stdout=out.getvalue(), stderr=err.getvalue(), duration=duration)
 
 
+def _check_cors_header(actual_origin, expected_origin, probe_origin, hop_url):
+    """
+    Validate access-control-allow-origin for a single response.
+    Returns (failure_message, failure_text) or (None, None) on pass.
+    """
+    if not actual_origin:
+        return (
+            "CORS header missing in redirect chain",
+            f"'access-control-allow-origin' absent from response at {hop_url}",
+        )
+    if expected_origin is None:
+        if actual_origin != "*" and actual_origin != probe_origin:
+            return (
+                "access-control-allow-origin incorrect in redirect chain",
+                f"Expected '*' or {probe_origin!r} but got {actual_origin!r} at {hop_url}",
+            )
+    elif expected_origin == "*" and actual_origin != "*":
+        return (
+            "access-control-allow-origin incorrect in redirect chain",
+            f"Expected '*' but got {actual_origin!r} at {hop_url}",
+        )
+    elif expected_origin != "*" and actual_origin != expected_origin:
+        return (
+            "access-control-allow-origin incorrect in redirect chain",
+            f"Expected {expected_origin!r} but got {actual_origin!r} at {hop_url}",
+        )
+    return None, None
+
+
 def run_https_redirect_test(url, probe_origin, expected_origin, timeout):
     """
-    Test that HTTP redirects to HTTPS and that the final HTTPS response
-    still carries access-control-allow-origin.
+    Test that HTTP redirects to HTTPS and that access-control-allow-origin is
+    present and correct on every response in the chain, including redirect responses.
 
-    expected_origin is the configured origin (or '*').
+    Per the Fetch/CORS spec, browsers evaluate CORS headers on every hop — a missing
+    or incorrect header on any redirect response will cause the browser to abort the
+    request, regardless of whether the final response has correct headers.
+
+    expected_origin is the configured origin (None for lenient, '*' for wildcard,
+    or a specific domain).
     """
     case_name = f"https_redirect [{url}]"
 
     # Derive the HTTP version of the URL
     parsed = urllib.parse.urlparse(url)
-    if parsed.scheme == "https":
-        http_url = url.replace("https://", "http://", 1)
-    else:
-        http_url = url
+    http_url = url.replace("https://", "http://", 1) if parsed.scheme == "https" else url
 
     request_headers = {"Origin": probe_origin}
 
     start = time.time()
     with capture_output() as (out, err):
         print(f"GET {http_url} (checking https redirect)")
-        response, chain, req_err = _follow_to_final("GET", http_url, request_headers, timeout)
+        response, chain, hop_responses, req_err = _follow_to_final("GET", http_url, request_headers, timeout)
 
         if req_err:
             print(f"Request failed: {req_err}", file=sys.stderr)
@@ -472,23 +547,19 @@ def run_https_redirect_test(url, probe_origin, expected_origin, timeout):
             src, dst, code = https_hop
             print(f"HTTP→HTTPS redirect: {src} → {dst} ({code})")
 
-            # Check that CORS header survived the redirect
-            actual_origin = response.headers.get("access-control-allow-origin", "").strip()
-            print(f"access-control-allow-origin after redirect: {actual_origin!r}")
+            # Validate CORS header on every hop response, then on the final response.
+            # The spec requires the header on each redirect response — browsers abort
+            # on the first hop that is missing or has an incorrect value.
+            all_responses = hop_responses + [(response.url, response)]
 
-            if not actual_origin:
-                failure_message = "CORS header lost after HTTP→HTTPS redirect"
-                failure_text = (
-                    f"'access-control-allow-origin' absent from final response at {response.url}"
+            for hop_url, hop_resp in all_responses:
+                actual_origin = hop_resp.headers.get("access-control-allow-origin", "").strip()
+                print(f"access-control-allow-origin at {hop_url}: {actual_origin!r}")
+                failure_message, failure_text = _check_cors_header(
+                    actual_origin, expected_origin, probe_origin, hop_url
                 )
-            elif expected_origin == "*" and actual_origin != "*":
-                failure_message = "access-control-allow-origin incorrect after redirect"
-                failure_text = f"Expected '*' but got {actual_origin!r} at {response.url}"
-            elif expected_origin != "*" and actual_origin != expected_origin:
-                failure_message = "access-control-allow-origin incorrect after redirect"
-                failure_text = (
-                    f"Expected {expected_origin!r} but got {actual_origin!r} at {response.url}"
-                )
+                if failure_message:
+                    break
 
     duration = time.time() - start
     return _result(case_name, url, failure_message=failure_message, failure_text=failure_text,
@@ -500,26 +571,47 @@ def run_https_redirect_test(url, probe_origin, expected_origin, timeout):
 # ---------------------------------------------------------------------------
 
 def run_tests_for_url(url, config):
+    probe_origin = config["probe_origin"]
+
+    # Safety check: probe-origin must not be the same origin as the URL being tested.
+    # A server that only returns CORS headers when the Origin matches its own origin
+    # is severely misconfigured — same-origin requests bypass CORS entirely, so such
+    # a server effectively supports no cross-origin access at all. Allowing the probe
+    # origin to equal the resource origin would mask this misconfiguration.
+    # Origin identity is defined as scheme + hostname + port, matching browser semantics.
+    url_origin = _origin_tuple(url)
+    probe_origin_tuple = _origin_tuple(probe_origin)
+    if url_origin[0] and url_origin[1] and url_origin == probe_origin_tuple:
+        return [skipped_test(
+            f"cors_compliance [{url}]",
+            f"probe-origin ({probe_origin!r}) must not be the same origin as the URL. "
+            f"Set probe-origin to an external origin to avoid masking server misconfigurations.",
+        )]
+
     results = []
     timeout = config["timeout"]
-    probe_origin = config["probe_origin"]
 
     # Determine the origin to use as the expected value for https_redirect check.
     # If there are multiple specific origins, use the first one as representative.
-    representative_origin = config["origins"][0]
+    representative_origin = config["origins"][0] if config["origins"] else None
 
-    # Must: access-control-allow-origin (one test case per origin)
-    for origin in config["origins"]:
+    # Must: access-control-allow-origin
+    # Lenient mode (origins is None) produces a single test case.
+    # Strict mode produces one test case per configured origin.
+    for origin in (config["origins"] or [None]):
         results.append(run_allow_origin_test(url, origin, probe_origin, timeout))
 
-    # Must: access-control-allow-methods
-    results.append(run_allow_methods_test(url, config["allow_methods"], timeout))
+    # Optional: access-control-allow-methods
+    if config["allow_methods"] is not None:
+        results.append(run_allow_methods_test(url, config["allow_methods"], timeout))
 
-    # Must: access-control-allow-headers
-    results.append(run_allow_headers_test(url, config["allow_headers"], timeout))
+    # Optional: access-control-allow-headers
+    if config["allow_headers"] is not None:
+        results.append(run_allow_headers_test(url, config["allow_headers"], timeout))
 
-    # Should: access-control-expose-headers
-    results.append(run_expose_headers_test(url, config["expose_headers"], probe_origin, timeout))
+    # Optional: access-control-expose-headers
+    if config["expose_headers"] is not None:
+        results.append(run_expose_headers_test(url, config["expose_headers"], probe_origin, timeout))
 
     # Should: https-redirect
     if config["https_redirect"]:

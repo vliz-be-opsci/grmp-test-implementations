@@ -39,7 +39,7 @@ from cors_compliance import (
 def make_response(status_code=200, headers=None, url="https://example.com"):
     resp = MagicMock()
     resp.status_code = status_code
-    resp.headers = headers or {}
+    resp.headers = {} if headers is None else headers
     resp.url = url
     return resp
 
@@ -53,9 +53,9 @@ def _config(**overrides):
         "timeout": 10,
         "probe_origin": "https://vliz.be",
         "origins": ["*"],
-        "allow_methods": ["GET", "HEAD", "OPTIONS"],
-        "allow_headers": ["Accept"],
-        "expose_headers": ["Content-Type", "Link"],
+        "allow_methods": None,
+        "allow_headers": None,
+        "expose_headers": None,
         "https_redirect": False,
     }
     base.update(overrides)
@@ -79,9 +79,20 @@ class TestParseListEnv:
         monkeypatch.setenv("TEST_FOO", "'single'")
         assert _parse_list_env("TEST_FOO", []) == ["single"]
 
-    def test_invalid_value_falls_back_to_default(self, monkeypatch):
+    def test_bare_wildcard_wrapped_in_list(self, monkeypatch):
+        # YAML scalar `access-control-allow-origin: '*'` arrives as bare string "*"
+        monkeypatch.setenv("TEST_FOO", "*")
+        assert _parse_list_env("TEST_FOO", None) == ["*"]
+
+    def test_bare_unquoted_string_wrapped_in_list(self, monkeypatch):
+        # e.g. a domain supplied without Python quoting
+        monkeypatch.setenv("TEST_FOO", "https://vliz.be")
+        assert _parse_list_env("TEST_FOO", None) == ["https://vliz.be"]
+
+    def test_syntactically_invalid_value_treated_as_bare_string(self, monkeypatch):
+        # Unparseable values are now treated as bare strings rather than falling back
         monkeypatch.setenv("TEST_FOO", "not valid{{")
-        assert _parse_list_env("TEST_FOO", ["default"]) == ["default"]
+        assert _parse_list_env("TEST_FOO", ["default"]) == ["not valid{{"]
 
     def test_filters_empty_strings(self, monkeypatch):
         monkeypatch.setenv("TEST_FOO", "['a', '', 'b']")
@@ -112,9 +123,14 @@ class TestParseOrigins:
         assert origins is None
         assert error is not None
 
-    def test_empty_list_defaults_to_wildcard(self):
+    def test_empty_list_returns_none_for_lenient_mode(self):
         origins, error = _parse_origins([])
-        assert origins == ["*"]
+        assert origins is None
+        assert error is None
+
+    def test_none_input_returns_none_for_lenient_mode(self):
+        origins, error = _parse_origins(None)
+        assert origins is None
         assert error is None
 
 
@@ -138,10 +154,10 @@ class TestParseConfig:
         self._clean(monkeypatch)
         config = parse_config()
         assert config["urls"] == []
-        assert config["origins"] == ["*"]
-        assert config["allow_methods"] == ["GET", "HEAD", "OPTIONS"]
-        assert config["allow_headers"] == ["Accept"]
-        assert config["expose_headers"] == ["Content-Type", "Link"]
+        assert config["origins"] is None  # lenient mode by default
+        assert config["allow_methods"] is None
+        assert config["allow_headers"] is None
+        assert config["expose_headers"] is None
         assert config["https_redirect"] is False
         assert config["probe_origin"] == "https://vliz.be"
         assert config["timeout"] == 30
@@ -155,9 +171,9 @@ class TestParseConfig:
         monkeypatch.setenv("TEST_ACCESS-CONTROL-ALLOW-ORIGIN", "['https://vliz.be']")
         assert parse_config()["origins"] == ["https://vliz.be"]
 
-    def test_mixed_origins_falls_back_to_wildcard(self, monkeypatch):
+    def test_mixed_origins_falls_back_to_lenient(self, monkeypatch):
         monkeypatch.setenv("TEST_ACCESS-CONTROL-ALLOW-ORIGIN", "['*', 'https://vliz.be']")
-        assert parse_config()["origins"] == ["*"]
+        assert parse_config()["origins"] is None
 
     def test_https_redirect_true(self, monkeypatch):
         monkeypatch.setenv("TEST_HTTPS-REDIRECT", "true")
@@ -196,9 +212,10 @@ class TestFollowToFinal:
     def test_no_redirect_returns_response(self):
         resp = make_response(200)
         with patch("cors_compliance.requests.request", return_value=resp):
-            final, chain, err = _follow_to_final("GET", "https://example.com", {}, 10)
+            final, chain, hop_responses, err = _follow_to_final("GET", "https://example.com", {}, 10)
         assert err is None
         assert chain == []
+        assert hop_responses == []
         assert final.status_code == 200
 
     def test_follows_single_redirect(self):
@@ -206,29 +223,31 @@ class TestFollowToFinal:
         final = make_response(200, url="https://example.com/new")
         responses = iter([redirect, final])
         with patch("cors_compliance.requests.request", side_effect=lambda *a, **kw: next(responses)):
-            result, chain, err = _follow_to_final("GET", "http://example.com", {}, 10)
+            result, chain, hop_responses, err = _follow_to_final("GET", "http://example.com", {}, 10)
         assert err is None
         assert len(chain) == 1
         assert chain[0][2] == 301
+        assert len(hop_responses) == 1
+        assert hop_responses[0][0] == "http://example.com"
 
     def test_redirect_missing_location_returns_error(self):
         redirect = make_response(301, headers={}, url="http://example.com")
         with patch("cors_compliance.requests.request", return_value=redirect):
-            _, _, err = _follow_to_final("GET", "http://example.com", {}, 10)
+            _, _, _, err = _follow_to_final("GET", "http://example.com", {}, 10)
         assert err is not None
         assert "Location" in err
 
     def test_redirect_loop_returns_error(self):
         redirect = make_redirect_response(301, "http://example.com", "http://example.com")
         with patch("cors_compliance.requests.request", return_value=redirect):
-            _, _, err = _follow_to_final("GET", "http://example.com", {}, 10)
+            _, _, _, err = _follow_to_final("GET", "http://example.com", {}, 10)
         assert err is not None
         assert "loop" in err.lower()
 
     def test_request_error_propagates(self):
         import requests as req
         with patch("cors_compliance.requests.request", side_effect=req.exceptions.ConnectionError("refused")):
-            _, _, err = _follow_to_final("GET", "https://example.com", {}, 10)
+            _, _, _, err = _follow_to_final("GET", "https://example.com", {}, 10)
         assert err is not None
         assert "Connection error" in err
 
@@ -240,49 +259,82 @@ class TestFollowToFinal:
 class TestRunAllowOriginTest:
     def test_wildcard_origin_passes(self):
         resp = make_response(200, headers={"access-control-allow-origin": "*"})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_allow_origin_test("https://example.com", "*", "https://vliz.be", 10)
         assert result["failure_message"] is None
         assert result["error"] is None
 
     def test_wildcard_origin_fails_when_header_missing(self):
         resp = make_response(200, headers={})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_allow_origin_test("https://example.com", "*", "https://vliz.be", 10)
         assert result["failure_message"] is not None
         assert result["error"] is None
 
     def test_wildcard_origin_fails_when_specific_origin_returned(self):
         resp = make_response(200, headers={"access-control-allow-origin": "https://other.com"})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_allow_origin_test("https://example.com", "*", "https://vliz.be", 10)
         assert result["failure_message"] is not None
 
     def test_specific_origin_passes_when_reflected(self):
         resp = make_response(200, headers={"access-control-allow-origin": "https://vliz.be"})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_allow_origin_test("https://example.com", "https://vliz.be", "https://vliz.be", 10)
         assert result["failure_message"] is None
         assert result["error"] is None
 
     def test_specific_origin_fails_when_not_reflected(self):
         resp = make_response(200, headers={"access-control-allow-origin": "*"})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_allow_origin_test("https://example.com", "https://vliz.be", "https://vliz.be", 10)
         assert result["failure_message"] is not None
 
     def test_request_error_sets_error_not_failure(self):
-        with patch("cors_compliance._follow_to_final", return_value=(None, [], "Connection refused")):
+        with patch("cors_compliance._follow_to_final", return_value=(None, [], [], "Connection refused")):
             result = run_allow_origin_test("https://example.com", "*", "https://vliz.be", 10)
         assert result["error"] is not None
         assert result["failure_message"] is None
 
     def test_case_name_contains_url_and_origin(self):
         resp = make_response(200, headers={"access-control-allow-origin": "*"})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_allow_origin_test("https://example.com", "*", "https://vliz.be", 10)
         assert "https://example.com" in result["case_name"]
         assert "*" in result["case_name"]
+
+    # Lenient mode tests (origin=None)
+    def test_lenient_passes_when_wildcard_returned(self):
+        resp = make_response(200, headers={"access-control-allow-origin": "*"})
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
+            result = run_allow_origin_test("https://example.com", None, "https://vliz.be", 10)
+        assert result["failure_message"] is None
+        assert result["error"] is None
+
+    def test_lenient_passes_when_probe_origin_reflected(self):
+        resp = make_response(200, headers={"access-control-allow-origin": "https://vliz.be"})
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
+            result = run_allow_origin_test("https://example.com", None, "https://vliz.be", 10)
+        assert result["failure_message"] is None
+        assert result["error"] is None
+
+    def test_lenient_fails_when_header_missing(self):
+        resp = make_response(200, headers={})
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
+            result = run_allow_origin_test("https://example.com", None, "https://vliz.be", 10)
+        assert result["failure_message"] is not None
+
+    def test_lenient_fails_when_unrecognised_origin_returned(self):
+        resp = make_response(200, headers={"access-control-allow-origin": "https://other.com"})
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
+            result = run_allow_origin_test("https://example.com", None, "https://vliz.be", 10)
+        assert result["failure_message"] is not None
+
+    def test_lenient_case_name_contains_lenient_label(self):
+        resp = make_response(200, headers={"access-control-allow-origin": "*"})
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
+            result = run_allow_origin_test("https://example.com", None, "https://vliz.be", 10)
+        assert "lenient" in result["case_name"]
 
 
 # ---------------------------------------------------------------------------
@@ -292,39 +344,39 @@ class TestRunAllowOriginTest:
 class TestRunAllowMethodsTest:
     def test_passes_when_all_methods_present(self):
         resp = make_response(200, headers={"access-control-allow-methods": "GET, HEAD, OPTIONS, POST"})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_allow_methods_test("https://example.com", ["GET", "HEAD", "OPTIONS"], 10)
         assert result["failure_message"] is None
         assert result["error"] is None
 
     def test_passes_with_exact_match(self):
         resp = make_response(200, headers={"access-control-allow-methods": "GET, HEAD, OPTIONS"})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_allow_methods_test("https://example.com", ["GET", "HEAD", "OPTIONS"], 10)
         assert result["failure_message"] is None
 
     def test_fails_when_method_missing(self):
         resp = make_response(200, headers={"access-control-allow-methods": "GET, HEAD"})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_allow_methods_test("https://example.com", ["GET", "HEAD", "OPTIONS"], 10)
         assert result["failure_message"] is not None
         assert "OPTIONS" in result["failure_text"]
 
     def test_fails_when_header_missing(self):
         resp = make_response(200, headers={})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_allow_methods_test("https://example.com", ["GET"], 10)
         assert result["failure_message"] is not None
         assert "missing" in result["failure_message"].lower()
 
     def test_comparison_is_case_insensitive(self):
         resp = make_response(200, headers={"access-control-allow-methods": "get, head, options"})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_allow_methods_test("https://example.com", ["GET", "HEAD", "OPTIONS"], 10)
         assert result["failure_message"] is None
 
     def test_request_error_sets_error_not_failure(self):
-        with patch("cors_compliance._follow_to_final", return_value=(None, [], "Timeout")):
+        with patch("cors_compliance._follow_to_final", return_value=(None, [], [], "Timeout")):
             result = run_allow_methods_test("https://example.com", ["GET"], 10)
         assert result["error"] is not None
         assert result["failure_message"] is None
@@ -337,32 +389,32 @@ class TestRunAllowMethodsTest:
 class TestRunAllowHeadersTest:
     def test_passes_when_all_headers_present(self):
         resp = make_response(200, headers={"access-control-allow-headers": "Accept, X-Custom-Header, Authorization"})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_allow_headers_test("https://example.com", ["Accept", "X-Custom-Header"], 10)
         assert result["failure_message"] is None
         assert result["error"] is None
 
     def test_fails_when_header_missing(self):
         resp = make_response(200, headers={"access-control-allow-headers": "Accept"})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_allow_headers_test("https://example.com", ["Accept", "X-Custom-Header"], 10)
         assert result["failure_message"] is not None
         assert "x-custom-header" in result["failure_text"].lower()
 
     def test_fails_when_header_absent(self):
         resp = make_response(200, headers={})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_allow_headers_test("https://example.com", ["Accept"], 10)
         assert result["failure_message"] is not None
 
     def test_comparison_is_case_insensitive(self):
         resp = make_response(200, headers={"access-control-allow-headers": "accept, x-custom-header"})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_allow_headers_test("https://example.com", ["Accept", "X-Custom-Header"], 10)
         assert result["failure_message"] is None
 
     def test_request_error_sets_error_not_failure(self):
-        with patch("cors_compliance._follow_to_final", return_value=(None, [], "Connection refused")):
+        with patch("cors_compliance._follow_to_final", return_value=(None, [], [], "Connection refused")):
             result = run_allow_headers_test("https://example.com", ["Accept"], 10)
         assert result["error"] is not None
         assert result["failure_message"] is None
@@ -375,32 +427,32 @@ class TestRunAllowHeadersTest:
 class TestRunExposeHeadersTest:
     def test_passes_when_all_headers_exposed(self):
         resp = make_response(200, headers={"access-control-expose-headers": "Content-Type, Link, X-Extra"})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_expose_headers_test("https://example.com", ["Content-Type", "Link"], "https://vliz.be", 10)
         assert result["failure_message"] is None
         assert result["error"] is None
 
     def test_fails_when_header_missing_from_exposed(self):
         resp = make_response(200, headers={"access-control-expose-headers": "Content-Type"})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_expose_headers_test("https://example.com", ["Content-Type", "Link"], "https://vliz.be", 10)
         assert result["failure_message"] is not None
         assert "link" in result["failure_text"].lower()
 
     def test_fails_when_header_absent(self):
         resp = make_response(200, headers={})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_expose_headers_test("https://example.com", ["Content-Type"], "https://vliz.be", 10)
         assert result["failure_message"] is not None
 
     def test_comparison_is_case_insensitive(self):
         resp = make_response(200, headers={"access-control-expose-headers": "content-type, link"})
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             result = run_expose_headers_test("https://example.com", ["Content-Type", "Link"], "https://vliz.be", 10)
         assert result["failure_message"] is None
 
     def test_request_error_sets_error_not_failure(self):
-        with patch("cors_compliance._follow_to_final", return_value=(None, [], "SSL error")):
+        with patch("cors_compliance._follow_to_final", return_value=(None, [], [], "SSL error")):
             result = run_expose_headers_test("https://example.com", ["Content-Type"], "https://vliz.be", 10)
         assert result["error"] is not None
         assert result["failure_message"] is None
@@ -411,40 +463,66 @@ class TestRunExposeHeadersTest:
 # ---------------------------------------------------------------------------
 
 class TestRunHttpsRedirectTest:
-    def test_passes_when_redirect_and_cors_header_present(self):
-        resp = make_response(200, headers={"access-control-allow-origin": "*"}, url="https://example.com")
-        chain = [("http://example.com", "https://example.com", 301)]
-        with patch("cors_compliance._follow_to_final", return_value=(resp, chain, None)):
+    """
+    Note: _follow_to_final now returns (final_response, chain, hop_responses, error).
+    hop_responses is a list of (url, response) for each redirect response.
+    """
+
+    def _make_redirect_result(self, hop_headers=None, final_headers=None,
+                               chain=None, error=None):
+        """Build a mock _follow_to_final return value.
+
+        hop_headers / final_headers default to {"access-control-allow-origin": "*"}
+        when not supplied. Pass an explicit dict (including {}) to override.
+        """
+        _default = {"access-control-allow-origin": "*"}
+        hop_url = "http://example.com"
+        final_url = "https://example.com"
+        hop_resp = make_response(301, headers=_default if hop_headers is None else hop_headers, url=hop_url)
+        final_resp = make_response(200, headers=_default if final_headers is None else final_headers, url=final_url)
+        redirect_chain = chain if chain is not None else [(hop_url, final_url, 301)]
+        hop_responses = [(hop_url, hop_resp)] if redirect_chain else []
+        return (final_resp, redirect_chain, hop_responses, error)
+
+    def test_passes_when_redirect_and_cors_header_present_on_all_hops(self):
+        with patch("cors_compliance._follow_to_final", return_value=self._make_redirect_result()):
             result = run_https_redirect_test("https://example.com", "https://vliz.be", "*", 10)
         assert result["failure_message"] is None
         assert result["error"] is None
 
     def test_fails_when_no_http_to_https_redirect(self):
-        resp = make_response(200, headers={"access-control-allow-origin": "*"}, url="http://example.com")
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        final = make_response(200, headers={"access-control-allow-origin": "*"}, url="http://example.com")
+        with patch("cors_compliance._follow_to_final", return_value=(final, [], [], None)):
             result = run_https_redirect_test("https://example.com", "https://vliz.be", "*", 10)
         assert result["failure_message"] is not None
         assert "redirect" in result["failure_message"].lower()
 
-    def test_fails_when_cors_header_lost_after_redirect(self):
-        resp = make_response(200, headers={}, url="https://example.com")
-        chain = [("http://example.com", "https://example.com", 301)]
-        with patch("cors_compliance._follow_to_final", return_value=(resp, chain, None)):
+    def test_fails_when_cors_header_missing_on_redirect_hop(self):
+        """CORS header absent on the redirect response itself should fail."""
+        with patch("cors_compliance._follow_to_final",
+                   return_value=self._make_redirect_result(hop_headers={})):
             result = run_https_redirect_test("https://example.com", "https://vliz.be", "*", 10)
         assert result["failure_message"] is not None
-        assert "lost" in result["failure_message"].lower()
+        assert "missing" in result["failure_message"].lower()
 
-    def test_fails_when_cors_header_incorrect_after_redirect(self):
-        resp = make_response(200, headers={"access-control-allow-origin": "https://other.com"}, url="https://example.com")
-        chain = [("http://example.com", "https://example.com", 301)]
-        with patch("cors_compliance._follow_to_final", return_value=(resp, chain, None)):
+    def test_fails_when_cors_header_missing_on_final_response(self):
+        with patch("cors_compliance._follow_to_final",
+                   return_value=self._make_redirect_result(final_headers={})):
             result = run_https_redirect_test("https://example.com", "https://vliz.be", "*", 10)
         assert result["failure_message"] is not None
 
-    def test_specific_origin_reflected_after_redirect_passes(self):
-        resp = make_response(200, headers={"access-control-allow-origin": "https://vliz.be"}, url="https://example.com")
-        chain = [("http://example.com", "https://example.com", 301)]
-        with patch("cors_compliance._follow_to_final", return_value=(resp, chain, None)):
+    def test_fails_when_cors_header_incorrect_on_redirect_hop(self):
+        with patch("cors_compliance._follow_to_final",
+                   return_value=self._make_redirect_result(
+                       hop_headers={"access-control-allow-origin": "https://other.com"})):
+            result = run_https_redirect_test("https://example.com", "https://vliz.be", "*", 10)
+        assert result["failure_message"] is not None
+
+    def test_specific_origin_reflected_on_all_hops_passes(self):
+        with patch("cors_compliance._follow_to_final",
+                   return_value=self._make_redirect_result(
+                       hop_headers={"access-control-allow-origin": "https://vliz.be"},
+                       final_headers={"access-control-allow-origin": "https://vliz.be"})):
             result = run_https_redirect_test("https://example.com", "https://vliz.be", "https://vliz.be", 10)
         assert result["failure_message"] is None
 
@@ -452,18 +530,43 @@ class TestRunHttpsRedirectTest:
         captured = {}
         def fake_follow(method, url, headers, timeout):
             captured["url"] = url
-            resp = make_response(200, headers={"access-control-allow-origin": "*"}, url="https://example.com")
-            chain = [("http://example.com", "https://example.com", 301)]
-            return resp, chain, None
+            return self._make_redirect_result()
         with patch("cors_compliance._follow_to_final", side_effect=fake_follow):
             run_https_redirect_test("https://example.com", "https://vliz.be", "*", 10)
         assert captured["url"].startswith("http://")
 
     def test_request_error_sets_error_not_failure(self):
-        with patch("cors_compliance._follow_to_final", return_value=(None, [], "Connection refused")):
+        with patch("cors_compliance._follow_to_final", return_value=(None, [], [], "Connection refused")):
             result = run_https_redirect_test("https://example.com", "https://vliz.be", "*", 10)
         assert result["error"] is not None
         assert result["failure_message"] is None
+
+    def test_lenient_passes_when_wildcard_on_all_hops(self):
+        with patch("cors_compliance._follow_to_final", return_value=self._make_redirect_result()):
+            result = run_https_redirect_test("https://example.com", "https://vliz.be", None, 10)
+        assert result["failure_message"] is None
+
+    def test_lenient_passes_when_probe_origin_reflected_on_all_hops(self):
+        with patch("cors_compliance._follow_to_final",
+                   return_value=self._make_redirect_result(
+                       hop_headers={"access-control-allow-origin": "https://vliz.be"},
+                       final_headers={"access-control-allow-origin": "https://vliz.be"})):
+            result = run_https_redirect_test("https://example.com", "https://vliz.be", None, 10)
+        assert result["failure_message"] is None
+
+    def test_lenient_fails_when_arbitrary_origin_on_redirect_hop(self):
+        with patch("cors_compliance._follow_to_final",
+                   return_value=self._make_redirect_result(
+                       hop_headers={"access-control-allow-origin": "https://malicious.com"})):
+            result = run_https_redirect_test("https://example.com", "https://vliz.be", None, 10)
+        assert result["failure_message"] is not None
+
+    def test_lenient_fails_when_arbitrary_origin_on_final_response(self):
+        with patch("cors_compliance._follow_to_final",
+                   return_value=self._make_redirect_result(
+                       final_headers={"access-control-allow-origin": "https://malicious.com"})):
+            result = run_https_redirect_test("https://example.com", "https://vliz.be", None, 10)
+        assert result["failure_message"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -479,22 +582,64 @@ class TestRunTestsForUrl:
             "access-control-expose-headers": "Content-Type, Link",
         })
 
-    def test_produces_four_results_without_redirect(self):
+    def test_produces_one_result_when_only_origin_configured(self):
         resp = self._mock_passing_response()
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
-            results = run_tests_for_url("https://example.com", _config(https_redirect=False))
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
+            results = run_tests_for_url(
+                "https://example.com",
+                _config(origins=None, allow_methods=None, allow_headers=None,
+                        expose_headers=None, https_redirect=False)
+            )
+        assert len(results) == 1
+
+    def test_produces_four_results_when_all_optional_configured(self):
+        resp = self._mock_passing_response()
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
+            results = run_tests_for_url(
+                "https://example.com",
+                _config(origins=None, allow_methods=["GET"], allow_headers=["Accept"],
+                        expose_headers=["Content-Type"], https_redirect=False)
+            )
         assert len(results) == 4
 
-    def test_produces_five_results_with_redirect(self):
+    def test_produces_five_results_with_redirect_and_all_optional_configured(self):
         resp = self._mock_passing_response()
         chain = [("http://example.com", "https://example.com", 301)]
-        with patch("cors_compliance._follow_to_final", return_value=(resp, chain, None)):
-            results = run_tests_for_url("https://example.com", _config(https_redirect=True))
+        with patch("cors_compliance._follow_to_final", return_value=(resp, chain, [], None)):
+            results = run_tests_for_url(
+                "https://example.com",
+                _config(allow_methods=["GET"], allow_headers=["Accept"],
+                        expose_headers=["Content-Type"], https_redirect=True)
+            )
         assert len(results) == 5
+
+    def test_omits_allow_methods_when_not_configured(self):
+        resp = self._mock_passing_response()
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
+            results = run_tests_for_url(
+                "https://example.com", _config(allow_methods=None)
+            )
+        assert not any("allow_methods" in r["case_name"] for r in results)
+
+    def test_omits_allow_headers_when_not_configured(self):
+        resp = self._mock_passing_response()
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
+            results = run_tests_for_url(
+                "https://example.com", _config(allow_headers=None)
+            )
+        assert not any("allow_headers" in r["case_name"] for r in results)
+
+    def test_omits_expose_headers_when_not_configured(self):
+        resp = self._mock_passing_response()
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
+            results = run_tests_for_url(
+                "https://example.com", _config(expose_headers=None)
+            )
+        assert not any("expose_headers" in r["case_name"] for r in results)
 
     def test_produces_one_origin_result_per_origin(self):
         resp = self._mock_passing_response("https://vliz.be")
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             results = run_tests_for_url(
                 "https://example.com",
                 _config(origins=["https://vliz.be", "https://github.com"])
@@ -504,9 +649,56 @@ class TestRunTestsForUrl:
 
     def test_all_case_names_contain_url(self):
         resp = self._mock_passing_response()
-        with patch("cors_compliance._follow_to_final", return_value=(resp, [], None)):
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
             results = run_tests_for_url("https://example.com", _config())
         assert all("https://example.com" in r["case_name"] for r in results)
+
+    def test_skips_when_probe_origin_matches_url_origin(self):
+        results = run_tests_for_url(
+            "https://example.com",
+            _config(probe_origin="https://example.com")
+        )
+        assert len(results) == 1
+        assert results[0]["skipped"] is True
+        assert "probe-origin" in results[0]["skipped_message"].lower()
+
+    def test_does_not_skip_when_probe_origin_differs_by_scheme(self):
+        """http://example.com vs https://example.com are different origins."""
+        resp = self._mock_passing_response()
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
+            results = run_tests_for_url(
+                "https://example.com",
+                _config(probe_origin="http://example.com")
+            )
+        assert not any(r["skipped"] for r in results)
+
+    def test_does_not_skip_when_probe_origin_differs_by_port(self):
+        """https://example.com:8443 vs https://example.com are different origins."""
+        resp = self._mock_passing_response()
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
+            results = run_tests_for_url(
+                "https://example.com",
+                _config(probe_origin="https://example.com:8443")
+            )
+        assert not any(r["skipped"] for r in results)
+
+    def test_skips_when_probe_origin_matches_url_with_explicit_default_port(self):
+        """https://example.com:443 and https://example.com are the same origin."""
+        results = run_tests_for_url(
+            "https://example.com",
+            _config(probe_origin="https://example.com:443")
+        )
+        assert len(results) == 1
+        assert results[0]["skipped"] is True
+
+    def test_does_not_skip_when_probe_origin_differs_from_url(self):
+        resp = self._mock_passing_response()
+        with patch("cors_compliance._follow_to_final", return_value=(resp, [], [], None)):
+            results = run_tests_for_url(
+                "https://example.com",
+                _config(probe_origin="https://vliz.be")
+            )
+        assert not any(r["skipped"] for r in results)
 
 
 # ---------------------------------------------------------------------------
