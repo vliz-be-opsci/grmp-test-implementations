@@ -1,0 +1,5 @@
+junitparser>=3.0.0
+requests>=2.32.4
+rdflib
+pytest
+
