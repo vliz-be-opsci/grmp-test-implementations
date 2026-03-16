@@ -370,7 +370,7 @@ class TestParseConfig:
         assert config["check_http"] is False
         assert config["check_https"] is True
         assert config["verify_ssl"] is True
-        assert config["providence"] == "unknown"
+        assert config["provenance"] == "unknown"
 
     def test_single_url_list(self, monkeypatch):
         monkeypatch.setenv("TEST_URLS", "['https://example.com']")
@@ -404,9 +404,9 @@ class TestParseConfig:
         monkeypatch.setenv("TEST_MAX-REDIRECTS", "5")
         assert parse_config()["max_redirects"] == 5
 
-    def test_providence_from_env(self, monkeypatch):
+    def test_provenance_from_env(self, monkeypatch):
         monkeypatch.setenv("SPECIAL_SOURCE_FILE", "my-config.yaml")
-        assert parse_config()["providence"] == "my-config.yaml"
+        assert parse_config()["provenance"] == "my-config.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -445,10 +445,10 @@ class TestCreateJunitReport:
         create_junit_report("suite", [self._result(error=True)], out, set(), "test")
         assert "error" in open(out).read().lower()
 
-    def test_providence_present_in_xml(self, tmp_path):
+    def test_provenance_present_in_xml(self, tmp_path):
         out = str(tmp_path / "report.xml")
-        create_junit_report("suite", [self._result()], out, set(), "my-providence-value")
-        assert "my-providence-value" in open(out).read()
+        create_junit_report("suite", [self._result()], out, set(), "my-provenance-value")
+        assert "my-provenance-value" in open(out).read()
 
     def test_append_property_urls_comma_joined(self, tmp_path):
         out = str(tmp_path / "report.xml")

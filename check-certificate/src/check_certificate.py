@@ -61,7 +61,7 @@ def parse_config():
         "urls": urls,
         "timeout": _parse_int_env("TEST_TIMEOUT", 30, minimum=1),
         "expiry_days": _parse_int_env("TEST_CERTIFICATE-EXPIRY-DAYS", 30, minimum=0),
-        "providence": os.environ.get("SPECIAL_SOURCE_FILE", "unknown"),
+        "provenance": os.environ.get("SPECIAL_SOURCE_FILE", "unknown"),
     }
 
 
@@ -215,7 +215,7 @@ def run_tests_for_url(url, config):
     return [run_expiry_test(url, config["timeout"], config["expiry_days"])]
 
 
-def create_junit_report(suite_name, results, output_file, special_key_append_properties, providence, suite_properties=None):
+def create_junit_report(suite_name, results, output_file, special_key_append_properties, provenance, suite_properties=None):
     suite = TestSuite(suite_name)
     suite.timestamp = datetime.now(timezone.utc).isoformat()
     if suite_properties is None:
@@ -265,7 +265,7 @@ def create_junit_report(suite_name, results, output_file, special_key_append_pro
         suite.add_property("timeout", str(timeout))
     if (expiry_days := suite_properties.get("expiry_days")) is not None:
         suite.add_property("certificate-expiry-days", str(expiry_days))
-    suite.add_property("providence", providence)
+    suite.add_property("provenance", provenance)
     suite.time = total_time
     xml = JUnitXml()
     xml.add_testsuite(suite)
@@ -287,6 +287,6 @@ if __name__ == "__main__":
     create_junit_report(
         suite_name, results, output_file=report_path,
         special_key_append_properties={"urls", "hostnames"},
-        providence=config["providence"],
+        provenance=config["provenance"],
         suite_properties=config,
     )

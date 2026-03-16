@@ -416,7 +416,7 @@ class TestParseConfig:
         assert config["urls"] == []
         assert config["timeout"] == 30
         assert config["expiry_days"] == 30
-        assert config["providence"] == "unknown"
+        assert config["provenance"] == "unknown"
 
     def test_single_url(self, monkeypatch):
         monkeypatch.setenv("TEST_URLS", "['https://example.com']")
@@ -438,9 +438,9 @@ class TestParseConfig:
         monkeypatch.setenv("TEST_CERTIFICATE-EXPIRY-DAYS", "14")
         assert parse_config()["expiry_days"] == 14
 
-    def test_providence_from_env(self, monkeypatch):
+    def test_provenance_from_env(self, monkeypatch):
         monkeypatch.setenv("SPECIAL_SOURCE_FILE", "my-config.yaml")
-        assert parse_config()["providence"] == "my-config.yaml"
+        assert parse_config()["provenance"] == "my-config.yaml"
 
     def test_invalid_timeout_falls_back_to_default(self, monkeypatch):
         monkeypatch.setenv("TEST_TIMEOUT", "not-a-number")
@@ -507,10 +507,10 @@ class TestCreateJunitReport:
         create_junit_report("suite", [self._result(error=True)], out, set(), "test")
         assert "error" in open(out).read().lower()
 
-    def test_providence_present_in_xml(self, tmp_path):
+    def test_provenance_present_in_xml(self, tmp_path):
         out = str(tmp_path / "report.xml")
-        create_junit_report("suite", [self._result()], out, set(), "my-providence-value")
-        assert "my-providence-value" in open(out).read()
+        create_junit_report("suite", [self._result()], out, set(), "my-provenance-value")
+        assert "my-provenance-value" in open(out).read()
 
     def test_append_property_urls_comma_joined(self, tmp_path):
         out = str(tmp_path / "report.xml")
