@@ -26,6 +26,22 @@ def capture_output():
         yield out, err
 
 
+def _parse_int_env(name, default, *, minimum=None):
+    raw = os.environ.get(name, str(default))
+    try:
+        value = int(raw)
+    except ValueError:
+        print(f"Invalid {name}={raw!r}; falling back to {default}", file=sys.stderr)
+        return default
+    if minimum is not None and value < minimum:
+        print(
+            f"Invalid {name}={raw!r}; must be >= {minimum}. Falling back to {default}",
+            file=sys.stderr,
+        )
+        return default
+    return value
+
+
 def parse_config():
     raw_urls = os.environ.get("TEST_URLS", "[]")
     try:
@@ -42,8 +58,8 @@ def parse_config():
 
     return {
         "urls": urls,
-        "max_redirects": int(os.environ.get("TEST_MAX-REDIRECTS", "0")),
-        "timeout": int(os.environ.get("TEST_TIMEOUT", "30")),
+        "max_redirects": _parse_int_env("TEST_MAX-REDIRECTS", 0, minimum=0),
+        "timeout": _parse_int_env("TEST_TIMEOUT", 30, minimum=1),
         "check_http": os.environ.get("TEST_CHECK-HTTP-AVAILABILITY", "false").lower() == "true",
         "check_https": os.environ.get("TEST_CHECK-HTTPS-AVAILABILITY", "true").lower() == "true",
         "verify_ssl": os.environ.get("TEST_VERIFY-SSL", "true").lower() == "true",

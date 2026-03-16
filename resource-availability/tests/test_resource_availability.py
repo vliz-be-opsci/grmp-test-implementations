@@ -13,7 +13,6 @@ import os
 import pytest
 from unittest.mock import patch, MagicMock
 
-# Only for local testing
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from resource_availability import (
@@ -401,9 +400,33 @@ class TestParseConfig:
         monkeypatch.setenv("TEST_TIMEOUT", "60")
         assert parse_config()["timeout"] == 60
 
+    def test_invalid_timeout_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_TIMEOUT", "not-a-number")
+        assert parse_config()["timeout"] == 30
+
+    def test_zero_timeout_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_TIMEOUT", "0")
+        assert parse_config()["timeout"] == 30
+
+    def test_negative_timeout_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_TIMEOUT", "-5")
+        assert parse_config()["timeout"] == 30
+
     def test_custom_max_redirects(self, monkeypatch):
         monkeypatch.setenv("TEST_MAX-REDIRECTS", "5")
         assert parse_config()["max_redirects"] == 5
+
+    def test_zero_max_redirects_is_valid(self, monkeypatch):
+        monkeypatch.setenv("TEST_MAX-REDIRECTS", "0")
+        assert parse_config()["max_redirects"] == 0
+
+    def test_invalid_max_redirects_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_MAX-REDIRECTS", "not-a-number")
+        assert parse_config()["max_redirects"] == 0
+
+    def test_negative_max_redirects_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_MAX-REDIRECTS", "-1")
+        assert parse_config()["max_redirects"] == 0
 
     def test_provenance_from_env(self, monkeypatch):
         monkeypatch.setenv("SPECIAL_SOURCE_FILE", "my-config.yaml")
