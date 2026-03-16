@@ -200,10 +200,11 @@ class TestRunDnsTest:
         assert result["failure_message"] is not None
         assert "DNS resolution failed" in result["failure_message"]
 
-    def test_failure_puts_error_in_stderr(self):
+    def test_failure_puts_message_in_stdout(self):
         with patch("resource_availability.check_dns", return_value=(None, "Name not known")):
             result = run_dns_test("https://nonexistent.invalid")
-        assert "Name not known" in result["stderr"]
+        assert "Name not known" in result["stdout"]
+        assert result["stderr"] == ""
 
     def test_properties_contain_hostname(self):
         with patch("resource_availability.check_dns", return_value=("1.2.3.4", None)):
@@ -422,7 +423,7 @@ class TestCreateJunitReport:
             "failure_text": "fail detail" if failure else None,
             "properties": {"urls": "https://example.com", "hostnames": "example.com"},
             "skipped": skipped, "skipped_message": "reason" if skipped else "",
-            "stdout": "some output", "stderr": "some err" if (failure or error) else "",
+            "stdout": "some output", "stderr": "some err" if error else "",
         }
 
     def test_creates_xml_file(self, tmp_path):
@@ -444,6 +445,16 @@ class TestCreateJunitReport:
         out = str(tmp_path / "report.xml")
         create_junit_report("suite", [self._result(error=True)], out, set(), "test")
         assert "error" in open(out).read().lower()
+
+    def test_stderr_present_in_xml_on_error(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        create_junit_report("suite", [self._result(error=True)], out, set(), "prov")
+        assert "some err" in open(out).read()
+
+    def test_stderr_absent_in_xml_on_failure(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        create_junit_report("suite", [self._result(failure=True)], out, set(), "prov")
+        assert "some err" not in open(out).read()
 
     def test_provenance_present_in_xml(self, tmp_path):
         out = str(tmp_path / "report.xml")

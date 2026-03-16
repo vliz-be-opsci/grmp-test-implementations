@@ -168,7 +168,7 @@ def run_dns_test(url):
         if ip:
             print(f"resolved_ip: {ip}")
         else:
-            print(f"DNS resolution failed: {dns_error}", file=sys.stderr)
+            print(f"DNS resolution failed: {dns_error}")
             failure_message = f"DNS resolution failed for {hostname}"
             failure_text = dns_error
 
@@ -225,9 +225,9 @@ def run_availability_test(url, scheme, timeout, max_redirects, verify_ssl=True):
                 print(msg, file=sys.stderr)
                 error = msg
             elif err_msg:
-                print(f"Checking {scheme.upper()} availability for: {target_url}", file=sys.stderr)
-                print(f"Timeout: {timeout}s, Max redirects: {max_redirects}, Verify SSL: {effective_verify_ssl}", file=sys.stderr)
-                print(f"Availability check failed: {err_msg}", file=sys.stderr)
+                print(f"Checking {scheme.upper()} availability for: {target_url}")
+                print(f"Timeout: {timeout}s, Max redirects: {max_redirects}, Verify SSL: {effective_verify_ssl}")
+                print(f"Availability check failed: {err_msg}")
                 failure_message = f"{scheme.upper()} availability check failed"
                 failure_text = err_msg
             else:
