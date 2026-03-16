@@ -484,7 +484,7 @@ class TestCreateJunitReport:
             "skipped": skipped,
             "skipped_message": "reason" if skipped else "",
             "stdout": "some output",
-            "stderr": "some err" if (failure or error) else "",
+            "stderr": "some err" if error else "",
         }
 
     def test_creates_xml_file(self, tmp_path):
@@ -507,6 +507,16 @@ class TestCreateJunitReport:
         create_junit_report("suite", [self._result(error=True)], out, set(), "test")
         assert "error" in open(out).read().lower()
 
+    def test_stderr_present_in_xml_on_error(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        create_junit_report("suite", [self._result(error=True)], out, set(), "prov")
+        assert "some err" in open(out).read()
+
+    def test_stderr_absent_in_xml_on_failure(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        create_junit_report("suite", [self._result(failure=True)], out, set(), "prov")
+        assert "some err" not in open(out).read()
+
     def test_provenance_present_in_xml(self, tmp_path):
         out = str(tmp_path / "report.xml")
         create_junit_report("suite", [self._result()], out, set(), "my-provenance-value")
@@ -518,7 +528,15 @@ class TestCreateJunitReport:
         create_junit_report("suite", results, out, {"urls", "hostnames"}, "prov")
         content = open(out).read()
         assert 'name="urls"' in content
-        assert "https://example.com, https://example.com" in content
+        assert 'value="https://example.com"' in content
+
+    def test_append_property_urls_deduplicated(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        results = [self._result("t1"), self._result("t2")]  # both have same URL
+        create_junit_report("suite", results, out, {"urls", "hostnames"}, "prov")
+        content = open(out).read()
+        # same URL should appear only once, not twice
+        assert content.count("https://example.com") == 1
 
     def test_append_property_hostnames_comma_joined(self, tmp_path):
         out = str(tmp_path / "report.xml")
@@ -526,7 +544,7 @@ class TestCreateJunitReport:
         create_junit_report("suite", results, out, {"urls", "hostnames"}, "prov")
         content = open(out).read()
         assert 'name="hostnames"' in content
-        assert "example.com, example.com" in content
+        assert 'value="example.com"' in content
 
     def test_suite_time_equals_sum_of_durations(self, tmp_path):
         from junitparser import JUnitXml as JX

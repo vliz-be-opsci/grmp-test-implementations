@@ -257,9 +257,9 @@ def create_junit_report(suite_name, results, output_file, special_key_append_pro
         suite.add_testcase(case)
 
     for key, values in append_properties.items():
-        normalized_values = [str(v) for v in values if v is not None and str(v) != ""]
-        if normalized_values:
-            suite.add_property(key, ", ".join(normalized_values))
+        seen = dict.fromkeys(str(v) for v in values if v is not None and str(v) != "")
+        if seen:
+            suite.add_property(key, ", ".join(seen))
 
     if (timeout := suite_properties.get("timeout")) is not None:
         suite.add_property("timeout", str(timeout))
