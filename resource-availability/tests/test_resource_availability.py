@@ -24,6 +24,8 @@ from resource_availability import (
     skipped_test,
     parse_config,
     create_junit_report,
+    _parse_list_env,
+    _parse_int_env,
 )
 
 
@@ -349,6 +351,84 @@ class TestRunTestsForUrl:
 
 
 # ---------------------------------------------------------------------------
+# _parse_list_env
+# ---------------------------------------------------------------------------
+
+class TestParseListEnv:
+    def test_returns_default_when_not_set(self, monkeypatch):
+        monkeypatch.delenv("TEST_FOO", raising=False)
+        assert _parse_list_env("TEST_FOO", ["a"]) == ["a"]
+
+    def test_parses_list_literal(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "['x', 'y']")
+        assert _parse_list_env("TEST_FOO", []) == ["x", "y"]
+
+    def test_wraps_quoted_string_in_list(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "'single'")
+        assert _parse_list_env("TEST_FOO", []) == ["single"]
+
+    def test_bare_unquoted_string_wrapped_in_list(self, monkeypatch):
+        # e.g. TEST_URLS=https://example.com in docker-compose
+        monkeypatch.setenv("TEST_FOO", "https://example.com")
+        assert _parse_list_env("TEST_FOO", []) == ["https://example.com"]
+
+    def test_syntactically_invalid_value_treated_as_bare_string(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "not valid{{")
+        assert _parse_list_env("TEST_FOO", ["default"]) == ["not valid{{"]
+
+    def test_filters_empty_strings(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "['a', '', 'b']")
+        assert _parse_list_env("TEST_FOO", []) == ["a", "b"]
+
+    def test_strips_whitespace_from_values(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "['https://a.com', '  https://b.com  ']")
+        assert _parse_list_env("TEST_FOO", []) == ["https://a.com", "https://b.com"]
+
+    def test_non_list_type_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "42")
+        assert _parse_list_env("TEST_FOO", ["default"]) == ["default"]
+
+
+# ---------------------------------------------------------------------------
+# _parse_list_env
+# ---------------------------------------------------------------------------
+
+class TestParseListEnv:
+    def test_returns_default_when_not_set(self, monkeypatch):
+        monkeypatch.delenv("TEST_FOO", raising=False)
+        assert _parse_list_env("TEST_FOO", ["a"]) == ["a"]
+
+    def test_parses_list_literal(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "['x', 'y']")
+        assert _parse_list_env("TEST_FOO", []) == ["x", "y"]
+
+    def test_wraps_quoted_string_in_list(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "'single'")
+        assert _parse_list_env("TEST_FOO", []) == ["single"]
+
+    def test_bare_unquoted_string_wrapped_in_list(self, monkeypatch):
+        # e.g. TEST_URLS=https://example.com in docker-compose
+        monkeypatch.setenv("TEST_FOO", "https://example.com")
+        assert _parse_list_env("TEST_FOO", []) == ["https://example.com"]
+
+    def test_syntactically_invalid_value_treated_as_bare_string(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "not valid{{")
+        assert _parse_list_env("TEST_FOO", ["default"]) == ["not valid{{"]
+
+    def test_filters_empty_strings(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "['a', '', 'b']")
+        assert _parse_list_env("TEST_FOO", []) == ["a", "b"]
+
+    def test_strips_whitespace_from_values(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "['https://a.com', '  https://b.com  ']")
+        assert _parse_list_env("TEST_FOO", []) == ["https://a.com", "https://b.com"]
+
+    def test_non_list_type_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "42")
+        assert _parse_list_env("TEST_FOO", ["default"]) == ["default"]
+
+
+# ---------------------------------------------------------------------------
 # parse_config
 # ---------------------------------------------------------------------------
 
@@ -372,17 +452,9 @@ class TestParseConfig:
         assert config["verify_ssl"] is True
         assert config["provenance"] == "unknown"
 
-    def test_single_url_list(self, monkeypatch):
+    def test_custom_urls(self, monkeypatch):
         monkeypatch.setenv("TEST_URLS", "['https://example.com']")
         assert parse_config()["urls"] == ["https://example.com"]
-
-    def test_multiple_urls(self, monkeypatch):
-        monkeypatch.setenv("TEST_URLS", "['https://a.com', 'https://b.com']")
-        assert len(parse_config()["urls"]) == 2
-
-    def test_invalid_env_gives_empty_list(self, monkeypatch):
-        monkeypatch.setenv("TEST_URLS", "not-valid-python{{")
-        assert parse_config()["urls"] == []
 
     def test_check_http_enabled(self, monkeypatch):
         monkeypatch.setenv("TEST_CHECK-HTTP-AVAILABILITY", "true")

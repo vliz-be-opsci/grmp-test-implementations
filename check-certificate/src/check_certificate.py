@@ -27,6 +27,28 @@ def capture_output():
         yield out, err
 
 
+def _parse_list_env(name, default):
+    """
+    Parse an env variable expected to be a Python list literal, e.g. "['a', 'b']".
+    A bare string (not a valid Python literal) is treated as a single-element list,
+    so plain values like TEST_URLS=https://example.com work without extra quoting.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        parsed = ast.literal_eval(raw)
+    except (ValueError, SyntaxError):
+        return [raw]
+    if isinstance(parsed, str):
+        return [parsed]
+    if isinstance(parsed, (list, tuple)):
+        return [v.strip() for v in parsed if isinstance(v, str) and v.strip()]
+    print(f"Invalid {name}={raw!r}; must be a list of strings. Falling back to default",
+          file=sys.stderr)
+    return default
+
+
 def _parse_int_env(name, default, *, minimum=None):
     raw = os.environ.get(name, str(default))
     try:
@@ -44,18 +66,7 @@ def _parse_int_env(name, default, *, minimum=None):
 
 
 def parse_config():
-    raw_urls = os.environ.get("TEST_URLS", "[]")
-    try:
-        parsed_urls = ast.literal_eval(raw_urls)
-    except (ValueError, SyntaxError):
-        parsed_urls = []
-
-    if isinstance(parsed_urls, str):
-        parsed_urls = [parsed_urls]
-    elif not isinstance(parsed_urls, (list, tuple)):
-        raise ValueError("TEST_URLS must be a URL string or list/tuple of URL strings")
-
-    urls = [u for u in parsed_urls if isinstance(u, str) and u]
+    urls = _parse_list_env("TEST_URLS", [])
 
     return {
         "urls": urls,
