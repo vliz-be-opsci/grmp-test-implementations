@@ -1,186 +1,223 @@
 #!/usr/bin/env python3
 """
 Input Echo Test
-A simple worker that creates a jUnit XML report containing the input parameters and checks whether any of them are empty.
+Checks the presence and validity of TEST_* configuration parameters.
+
+The following test cases are produced:
+  - get_env_test        checks that at least one TEST_* parameter is configured
+  - check_emptiness_test  checks that none of the TEST_* parameters have an empty or None value
+                          (skipped if get_env_test fails)
 """
 
-import os
-from datetime import datetime, timezone
-import time
-from junitparser import TestCase, TestSuite, JUnitXml, Failure, Error, Skipped
 import contextlib
 import io
+import os
+import sys
+import time
+from datetime import datetime, timezone
 
-def create_junit_report(test_suite_name, results, output_file="echo_report.xml"):
-    """Create a jUnit XML report with input parameters using junitparser."""
+from junitparser import TestCase, TestSuite, JUnitXml, Failure, Error, Skipped
 
-    if results:
-        suite = TestSuite(test_suite_name)
-        suite.timestamp = datetime.now(timezone.utc).isoformat()
-        total_time = 0.0
 
-        for result in results:
-            case = TestCase(result["case_name"], classname=test_suite_name)
-            case.time = result["duration"]
-            total_time += result["duration"]
+# ---------------------------------------------------------------------------
+# Output capture
+# ---------------------------------------------------------------------------
 
-            for key, value in result["properties"].items():
+@contextlib.contextmanager
+def capture_output():
+    out = io.StringIO()
+    err = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        yield out, err
+
+
+# ---------------------------------------------------------------------------
+# Config parsing
+# ---------------------------------------------------------------------------
+
+def parse_config():
+    """
+    Collect all TEST_* environment variables and provenance.
+    Returns a dict with all TEST_* keys (lowercased, prefix stripped) as
+    config parameters, plus provenance from SPECIAL_SOURCE_FILE.
+    """
+    params = {}
+    for key, value in os.environ.items():
+        if key.startswith("TEST_"):
+            params[key[len("TEST_"):].lower()] = value
+
+    return {
+        "params": params,
+        "provenance": os.environ.get("SPECIAL_SOURCE_FILE", "unknown"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Result builder
+# ---------------------------------------------------------------------------
+
+def _result(case_name, *, failure_message=None, failure_text=None,
+            error=None, skipped=False, skipped_message="",
+            stdout="", stderr="", duration=0.0, properties=None):
+    return {
+        "case_name": case_name,
+        "duration": duration,
+        "error": error,
+        "failure_message": failure_message,
+        "failure_text": failure_text,
+        "properties": properties if properties is not None else {},
+        "skipped": skipped,
+        "skipped_message": skipped_message,
+        "stdout": stdout,
+        "stderr": stderr,
+    }
+
+
+def skipped_test(case_name, reason):
+    return _result(case_name, skipped=True, skipped_message=reason)
+
+
+# ---------------------------------------------------------------------------
+# Test functions
+# ---------------------------------------------------------------------------
+
+def get_env_test(params):
+    """
+    Check that at least one TEST_* parameter is configured.
+    Records all parameters and their count as test case properties.
+    """
+    start = time.time()
+    with capture_output() as (out, err):
+        properties = dict(params)
+
+        for key, value in params.items():
+            print(f"Found: TEST_{key.upper()} = {value}")
+
+        print(f"test_parameter_count: {len(params)}")
+
+        if len(params) == 0:
+            failure_message = "No test parameters found"
+            failure_text = "No TEST_* environment variables are configured."
+            print("No TEST_* parameters found", file=sys.stderr)
+        else:
+            failure_message = None
+            failure_text = None
+
+    duration = time.time() - start
+    return _result(
+        "get_env_test",
+        failure_message=failure_message,
+        failure_text=failure_text,
+        stdout=out.getvalue(),
+        stderr=err.getvalue(),
+        duration=duration,
+        properties=properties,
+    )
+
+
+def check_emptiness_test(params):
+    """
+    Check that none of the TEST_* parameters have an empty or None value.
+    """
+    start = time.time()
+    with capture_output() as (out, err):
+        empty_vars = []
+        for key, value in params.items():
+            if value is None or value.strip() == "" or value == "None":
+                empty_vars.append(key)
+                print(f"Found empty value: TEST_{key.upper()} = {value!r}")
+
+        print(f"empty_test_parameter_count: {len(empty_vars)}")
+
+        if empty_vars:
+            failure_message = "Empty test parameters found"
+            failure_text = "\n".join(sorted(empty_vars))
+        else:
+            failure_message = None
+            failure_text = None
+
+    duration = time.time() - start
+    return _result(
+        "check_emptiness_test",
+        failure_message=failure_message,
+        failure_text=failure_text,
+        stdout=out.getvalue(),
+        stderr=err.getvalue(),
+        duration=duration,
+    )
+
+
+# ---------------------------------------------------------------------------
+# JUnit report
+# ---------------------------------------------------------------------------
+
+def create_junit_report(suite_name, results, output_file, provenance,
+                        suite_properties=None):
+    suite = TestSuite(suite_name)
+    suite.timestamp = datetime.now(timezone.utc).isoformat()
+    if suite_properties is None:
+        suite_properties = {}
+    total_time = 0.0
+    added_properties = set()
+
+    for result in results:
+        case = TestCase(result["case_name"], classname=suite_name)
+        case.time = result["duration"]
+        total_time += result["duration"]
+
+        for key, value in result["properties"].items():
+            if key not in added_properties:
                 suite.add_property(key, value)
-            
-            if result.get("skipped"):
-                skipped = Skipped(message=result.get("skipped_message", "Skipped"))
-                case.result = skipped
-            elif result["error"] is not None:
-                err = Error(message="Unexpected exception")
+                added_properties.add(key)
+
+        if result["skipped"]:
+            case.result = [Skipped(message=result["skipped_message"])]
+        else:
+            if result["error"] is not None:
+                err = Error(message="Unexpected error")
                 err.text = str(result["error"])
-                case.result = err
-                case.system_out = result.get("stdout", "")
-                case.system_err = result.get("stderr", "")
+                case.result = [err]
+                if result.get("stderr"):
+                    case.system_err = result["stderr"]
             elif result["failure_message"]:
                 failure = Failure(message=result["failure_message"])
                 failure.text = result["failure_text"]
-                case.result = failure
-                case.system_out = result.get("stdout", "")
-                case.system_err = result.get("stderr", "")
+                case.result = [failure]
+            if result.get("stdout"):
+                case.system_out = result["stdout"]
 
-            suite.add_testcase(case)
-        
-        suite.time = total_time
+        suite.add_testcase(case)
 
-        xml = JUnitXml()
-        xml.add_testsuite(suite)
-        xml.write(output_file)
+    suite.add_property("provenance", provenance)
+    suite.time = total_time
+    xml = JUnitXml()
+    xml.add_testsuite(suite)
+    xml.write(output_file)
 
-def check_emptiness_test():
-    """Check whether TEST_ environment variables are empty or whitespace."""
-    start = time.time()
-    error = None
-    failure_message = None
-    failure_text = None
-    properties = {}
-    skip_reason = ""
-    stdout_capture = io.StringIO()
-    stderr_capture = io.StringIO()
 
-    try:
-        with contextlib.redirect_stdout(stdout_capture), contextlib.redirect_stderr(stderr_capture):
-            empty_vars = []
-            for key, value in os.environ.items():
-                if not key.startswith("TEST_"):
-                    continue
-                elif value is None or value.strip() == "" or value == "None":
-                    empty_vars.append(key[len("TEST_"):].lower())
-                    print(f"Found empty value: {key} = {value}")
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
-            properties["empty_test_parameter_count"] = str(len(empty_vars))
+if __name__ == "__main__":
+    suite_name = os.environ.get("TS_NAME", "input-echo")
+    config = parse_config()
+    params = config["params"]
 
-            if empty_vars:
-                failure_message = "Empty test parameters found"
-                failure_text = "\n".join(sorted(empty_vars))
+    result_get_env = get_env_test(params)
 
-    except Exception as exc:
-        error = exc
-
-    duration = time.time() - start
-
-    return {
-        "case_name": "check_emptiness_test",
-        "properties": properties,
-        "duration": duration,
-        "error": error,
-        "failure_message": failure_message,
-        "failure_text": failure_text,
-        "skipped": False,
-        "skipped_message": skip_reason,
-        "stdout": stdout_capture.getvalue(),
-        "stderr": stderr_capture.getvalue()
-    }
-
-def get_env_test():
-    """Collect TEST_ environment variables."""
-    start_time = time.time()
-    error = None
-    failure_message = None
-    failure_text = None
-    properties = {}
-    skip_reason = ""
-    stdout_capture = io.StringIO()
-    stderr_capture = io.StringIO()
-
-    try:
-        with contextlib.redirect_stdout(stdout_capture), contextlib.redirect_stderr(stderr_capture):
-            for key, value in os.environ.items():
-                if not key.startswith("TEST_"):
-                    continue
-                else:
-                    properties[key[len("TEST_"):].lower()] = value
-                    print(f"Found: {key} = {value}")
-
-            env_var_count = len(properties)
-            properties["test_parameter_count"] = str(env_var_count)
-
-            if env_var_count == 0:
-                failure_message = "No test parameters found"
-                failure_text = ""
-
-    except Exception as exc:
-        error = exc
-
-    duration = time.time() - start_time
-
-    source_file = os.environ.get("SPECIAL_SOURCE_FILE")
-    if source_file:
-        if "source_file" in properties:
-            # TEST_SOURCE_FILE conflicts with SPECIAL_SOURCE_FILE; keep special value
-            properties["test_source_file"] = properties["source_file"]
-        properties["source_file"] = source_file
-
-    return {
-        "case_name": "get_env_test", 
-        "properties": properties,
-        "duration": duration,
-        "error": error,
-        "failure_message": failure_message,
-        "failure_text": failure_text,
-        "skipped": False,
-        "skipped_message": skip_reason,
-        "stdout": stdout_capture.getvalue(),
-        "stderr": stderr_capture.getvalue()
-    }
-
-def skipped_test(case_name, reason="Test skipped"):
-    """
-    Return a dictionary in the same format as normal tests
-    but indicating that the test was skipped.
-    """
-    return {
-        "case_name": case_name,
-        "duration": 0.0,
-        "error": None,
-        "failure_message": None,
-        "failure_text": None,
-        "properties": {},
-        "skipped": True,
-        "skipped_message": reason,
-        "stdout": "",
-        "stderr": ""
-    }
-
-if __name__ == '__main__':
-    test_suite_name = os.getenv("TS_NAME")
-
-    if test_suite_name:
-        result_get_env = get_env_test()
-        if result_get_env.get("failure_message") or result_get_env.get("error"):
-            skip_reason = "Failure or error within the get_env_test"
-            results = [result_get_env, skipped_test("check_emptiness_test", skip_reason)]
-        else:
-            result_empty = check_emptiness_test()
-            results = [result_get_env, result_empty]
+    if result_get_env["failure_message"] or result_get_env["error"]:
+        results = [
+            result_get_env,
+            skipped_test("check_emptiness_test",
+                         "Skipped because get_env_test did not pass."),
+        ]
     else:
-        skip_reason = "TS_NAME not set"
-        test_suite_name = "unknown"
-        results = [skipped_test("get_env_test", skip_reason), skipped_test("check_emptiness_test", skip_reason)]
-    
-    report_path = f'/reports/{test_suite_name}_report.xml'
-    create_junit_report(test_suite_name, results, output_file=report_path)
+        results = [result_get_env, check_emptiness_test(params)]
+
+    report_path = f"/reports/{suite_name}_report.xml"
+    create_junit_report(
+        suite_name, results, output_file=report_path,
+        provenance=config["provenance"],
+        suite_properties=config,
+    )
