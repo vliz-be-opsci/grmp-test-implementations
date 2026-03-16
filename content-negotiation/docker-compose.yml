@@ -1,0 +1,20 @@
+services:
+  contentnegotiation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: contentnegotiation
+    volumes:
+      - ./reports:/reports:rw
+    environment:
+      - TS_NAME=localtestrun
+      - TEST_URLS=['https://brugge-ldes.geomobility.eu/observations', 'https://ldes.telraam-api.net/locations', 'http://marineregions.org/feed']
+      - TEST_ACCEPT-HEADERS=['text/turtle', 'application/ld+json, application/trig;q=0.98, text/turtle;q=0.95, application/n-quads;q=0.9, application/n-triples;q=0.9, application/rdf+xml;q=0.5, text/html;q=0.3, */*;q=0.1']
+      - TEST_CHECK-RESPONSE-BODY-CONFORMITY=True
+    working_dir: /app
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge
