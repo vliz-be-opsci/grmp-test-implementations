@@ -14,7 +14,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 # Only for local testing
-# sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from resource_availability import (
     check_dns,
@@ -449,6 +449,34 @@ class TestCreateJunitReport:
         out = str(tmp_path / "report.xml")
         create_junit_report("suite", [self._result()], out, set(), "my-provenance-value")
         assert "my-provenance-value" in open(out).read()
+
+    def test_suite_properties_written_to_xml(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        suite_props = {
+            "timeout": 60,
+            "max_redirects": 3,
+            "check_http": True,
+            "check_https": False,
+            "verify_ssl": False,
+        }
+        create_junit_report("suite", [self._result()], out, set(), "prov",
+                            suite_properties=suite_props)
+        xml_content = open(out).read()
+        assert 'name="timeout" value="60"' in xml_content
+        assert 'name="max-redirects" value="3"' in xml_content
+        assert 'name="check-http-availability" value="true"' in xml_content
+        assert 'name="check-https-availability" value="false"' in xml_content
+        assert 'name="verify-ssl" value="false"' in xml_content
+
+    def test_suite_properties_absent_when_not_passed(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        create_junit_report("suite", [self._result()], out, set(), "prov")
+        xml_content = open(out).read()
+        assert 'name="timeout"' not in xml_content
+        assert 'name="max-redirects"' not in xml_content
+        assert 'name="check-http-availability"' not in xml_content
+        assert 'name="check-https-availability"' not in xml_content
+        assert 'name="verify-ssl"' not in xml_content
 
     def test_append_property_urls_comma_joined(self, tmp_path):
         out = str(tmp_path / "report.xml")

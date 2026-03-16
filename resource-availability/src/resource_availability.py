@@ -271,9 +271,11 @@ def run_tests_for_url(url, config):
 
     return results
 
-def create_junit_report(suite_name, results, output_file, special_key_append_properties, provenance):
+def create_junit_report(suite_name, results, output_file, special_key_append_properties, provenance, suite_properties=None):
     suite = TestSuite(suite_name)
     suite.timestamp = datetime.now(timezone.utc).isoformat()
+    if suite_properties is None:
+        suite_properties = {}
     total_time = 0.0
     added_properties = set()
     append_properties = {}  # key -> list of values to be appended
@@ -312,6 +314,16 @@ def create_junit_report(suite_name, results, output_file, special_key_append_pro
         if normalized_values:
             suite.add_property(key, ", ".join(normalized_values))
 
+    if (timeout := suite_properties.get("timeout")) is not None:
+        suite.add_property("timeout", str(timeout))
+    if (max_redirects := suite_properties.get("max_redirects")) is not None:
+        suite.add_property("max-redirects", str(max_redirects))
+    if (check_http := suite_properties.get("check_http")) is not None:
+        suite.add_property("check-http-availability", str(check_http).lower())
+    if (check_https := suite_properties.get("check_https")) is not None:
+        suite.add_property("check-https-availability", str(check_https).lower())
+    if (verify_ssl := suite_properties.get("verify_ssl")) is not None:
+        suite.add_property("verify-ssl", str(verify_ssl).lower())
     suite.add_property("provenance", provenance)
     suite.time = total_time
     xml = JUnitXml()
@@ -330,4 +342,9 @@ if __name__ == "__main__":
             results.extend(run_tests_for_url(url, config))
 
     report_path = f"/reports/{suite_name}_report.xml"
-    create_junit_report(suite_name, results, output_file=report_path, special_key_append_properties={'urls', 'hostnames'}, provenance=config["provenance"])
+    create_junit_report(
+        suite_name, results, output_file=report_path,
+        special_key_append_properties={"urls", "hostnames"},
+        provenance=config["provenance"],
+        suite_properties=config,
+    )
