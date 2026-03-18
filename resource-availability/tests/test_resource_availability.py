@@ -13,8 +13,7 @@ import os
 import pytest
 from unittest.mock import patch, MagicMock
 
-# Only for local testing
-# sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from resource_availability import (
     check_dns,
@@ -25,6 +24,8 @@ from resource_availability import (
     skipped_test,
     parse_config,
     create_junit_report,
+    _parse_list_env,
+    _parse_int_env,
 )
 
 
@@ -200,10 +201,11 @@ class TestRunDnsTest:
         assert result["failure_message"] is not None
         assert "DNS resolution failed" in result["failure_message"]
 
-    def test_failure_puts_error_in_stderr(self):
+    def test_failure_puts_message_in_stdout(self):
         with patch("resource_availability.check_dns", return_value=(None, "Name not known")):
             result = run_dns_test("https://nonexistent.invalid")
-        assert "Name not known" in result["stderr"]
+        assert "Name not known" in result["stdout"]
+        assert result["stderr"] == ""
 
     def test_properties_contain_hostname(self):
         with patch("resource_availability.check_dns", return_value=("1.2.3.4", None)):
@@ -349,6 +351,45 @@ class TestRunTestsForUrl:
 
 
 # ---------------------------------------------------------------------------
+# _parse_list_env
+# ---------------------------------------------------------------------------
+
+class TestParseListEnv:
+    def test_returns_default_when_not_set(self, monkeypatch):
+        monkeypatch.delenv("TEST_FOO", raising=False)
+        assert _parse_list_env("TEST_FOO", ["a"]) == ["a"]
+
+    def test_parses_list_literal(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "['x', 'y']")
+        assert _parse_list_env("TEST_FOO", []) == ["x", "y"]
+
+    def test_wraps_quoted_string_in_list(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "'single'")
+        assert _parse_list_env("TEST_FOO", []) == ["single"]
+
+    def test_bare_unquoted_string_wrapped_in_list(self, monkeypatch):
+        # e.g. TEST_URLS=https://example.com in docker-compose
+        monkeypatch.setenv("TEST_FOO", "https://example.com")
+        assert _parse_list_env("TEST_FOO", []) == ["https://example.com"]
+
+    def test_syntactically_invalid_value_treated_as_bare_string(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "not valid{{")
+        assert _parse_list_env("TEST_FOO", ["default"]) == ["not valid{{"]
+
+    def test_filters_empty_strings(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "['a', '', 'b']")
+        assert _parse_list_env("TEST_FOO", []) == ["a", "b"]
+
+    def test_strips_whitespace_from_values(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "['https://a.com', '  https://b.com  ']")
+        assert _parse_list_env("TEST_FOO", []) == ["https://a.com", "https://b.com"]
+
+    def test_non_list_type_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "42")
+        assert _parse_list_env("TEST_FOO", ["default"]) == ["default"]
+
+
+# ---------------------------------------------------------------------------
 # parse_config
 # ---------------------------------------------------------------------------
 
@@ -370,19 +411,11 @@ class TestParseConfig:
         assert config["check_http"] is False
         assert config["check_https"] is True
         assert config["verify_ssl"] is True
-        assert config["providence"] == "unknown"
+        assert config["provenance"] == "unknown"
 
-    def test_single_url_list(self, monkeypatch):
+    def test_custom_urls(self, monkeypatch):
         monkeypatch.setenv("TEST_URLS", "['https://example.com']")
         assert parse_config()["urls"] == ["https://example.com"]
-
-    def test_multiple_urls(self, monkeypatch):
-        monkeypatch.setenv("TEST_URLS", "['https://a.com', 'https://b.com']")
-        assert len(parse_config()["urls"]) == 2
-
-    def test_invalid_env_gives_empty_list(self, monkeypatch):
-        monkeypatch.setenv("TEST_URLS", "not-valid-python{{")
-        assert parse_config()["urls"] == []
 
     def test_check_http_enabled(self, monkeypatch):
         monkeypatch.setenv("TEST_CHECK-HTTP-AVAILABILITY", "true")
@@ -400,13 +433,37 @@ class TestParseConfig:
         monkeypatch.setenv("TEST_TIMEOUT", "60")
         assert parse_config()["timeout"] == 60
 
+    def test_invalid_timeout_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_TIMEOUT", "not-a-number")
+        assert parse_config()["timeout"] == 30
+
+    def test_zero_timeout_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_TIMEOUT", "0")
+        assert parse_config()["timeout"] == 30
+
+    def test_negative_timeout_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_TIMEOUT", "-5")
+        assert parse_config()["timeout"] == 30
+
     def test_custom_max_redirects(self, monkeypatch):
         monkeypatch.setenv("TEST_MAX-REDIRECTS", "5")
         assert parse_config()["max_redirects"] == 5
 
-    def test_providence_from_env(self, monkeypatch):
+    def test_zero_max_redirects_is_valid(self, monkeypatch):
+        monkeypatch.setenv("TEST_MAX-REDIRECTS", "0")
+        assert parse_config()["max_redirects"] == 0
+
+    def test_invalid_max_redirects_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_MAX-REDIRECTS", "not-a-number")
+        assert parse_config()["max_redirects"] == 0
+
+    def test_negative_max_redirects_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_MAX-REDIRECTS", "-1")
+        assert parse_config()["max_redirects"] == 0
+
+    def test_provenance_from_env(self, monkeypatch):
         monkeypatch.setenv("SPECIAL_SOURCE_FILE", "my-config.yaml")
-        assert parse_config()["providence"] == "my-config.yaml"
+        assert parse_config()["provenance"] == "my-config.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -422,7 +479,7 @@ class TestCreateJunitReport:
             "failure_text": "fail detail" if failure else None,
             "properties": {"urls": "https://example.com", "hostnames": "example.com"},
             "skipped": skipped, "skipped_message": "reason" if skipped else "",
-            "stdout": "some output", "stderr": "some err" if (failure or error) else "",
+            "stdout": "some output", "stderr": "some err" if error else "",
         }
 
     def test_creates_xml_file(self, tmp_path):
@@ -445,10 +502,48 @@ class TestCreateJunitReport:
         create_junit_report("suite", [self._result(error=True)], out, set(), "test")
         assert "error" in open(out).read().lower()
 
-    def test_providence_present_in_xml(self, tmp_path):
+    def test_stderr_present_in_xml_on_error(self, tmp_path):
         out = str(tmp_path / "report.xml")
-        create_junit_report("suite", [self._result()], out, set(), "my-providence-value")
-        assert "my-providence-value" in open(out).read()
+        create_junit_report("suite", [self._result(error=True)], out, set(), "prov")
+        assert "some err" in open(out).read()
+
+    def test_stderr_absent_in_xml_on_failure(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        create_junit_report("suite", [self._result(failure=True)], out, set(), "prov")
+        assert "some err" not in open(out).read()
+
+    def test_provenance_present_in_xml(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        create_junit_report("suite", [self._result()], out, set(), "my-provenance-value")
+        assert "my-provenance-value" in open(out).read()
+
+    def test_suite_properties_written_to_xml(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        suite_props = {
+            "timeout": 60,
+            "max_redirects": 3,
+            "check_http": True,
+            "check_https": False,
+            "verify_ssl": False,
+        }
+        create_junit_report("suite", [self._result()], out, set(), "prov",
+                            suite_properties=suite_props)
+        xml_content = open(out).read()
+        assert 'name="timeout" value="60"' in xml_content
+        assert 'name="max-redirects" value="3"' in xml_content
+        assert 'name="check-http-availability" value="true"' in xml_content
+        assert 'name="check-https-availability" value="false"' in xml_content
+        assert 'name="verify-ssl" value="false"' in xml_content
+
+    def test_suite_properties_absent_when_not_passed(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        create_junit_report("suite", [self._result()], out, set(), "prov")
+        xml_content = open(out).read()
+        assert 'name="timeout"' not in xml_content
+        assert 'name="max-redirects"' not in xml_content
+        assert 'name="check-http-availability"' not in xml_content
+        assert 'name="check-https-availability"' not in xml_content
+        assert 'name="verify-ssl"' not in xml_content
 
     def test_append_property_urls_comma_joined(self, tmp_path):
         out = str(tmp_path / "report.xml")
@@ -456,7 +551,15 @@ class TestCreateJunitReport:
         create_junit_report("suite", results, out, {"urls", "hostnames"}, "prov")
         content = open(out).read()
         assert 'name="urls"' in content
-        assert "https://example.com, https://example.com" in content
+        assert 'value="https://example.com"' in content
+
+    def test_append_property_urls_deduplicated(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        results = [self._result("t1"), self._result("t2")]  # both have same URL
+        create_junit_report("suite", results, out, {"urls", "hostnames"}, "prov")
+        content = open(out).read()
+        # same URL should appear only once, not twice
+        assert content.count("https://example.com") == 1
 
     def test_append_property_hostnames_comma_joined(self, tmp_path):
         out = str(tmp_path / "report.xml")
@@ -464,7 +567,7 @@ class TestCreateJunitReport:
         create_junit_report("suite", results, out, {"urls", "hostnames"}, "prov")
         content = open(out).read()
         assert 'name="hostnames"' in content
-        assert "example.com, example.com" in content
+        assert 'value="example.com"' in content
 
     def test_suite_time_equals_sum_of_durations(self, tmp_path):
         from junitparser import JUnitXml as JX

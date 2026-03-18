@@ -27,6 +27,28 @@ def capture_output():
         yield out, err
 
 
+def _parse_list_env(name, default):
+    """
+    Parse an env variable expected to be a Python list literal, e.g. "['a', 'b']".
+    A bare string (not a valid Python literal) is treated as a single-element list,
+    so plain values like TEST_URLS=https://example.com work without extra quoting.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        parsed = ast.literal_eval(raw)
+    except (ValueError, SyntaxError):
+        return [raw]
+    if isinstance(parsed, str):
+        return [parsed]
+    if isinstance(parsed, (list, tuple)):
+        return [v.strip() for v in parsed if isinstance(v, str) and v.strip()]
+    print(f"Invalid {name}={raw!r}; must be a list of strings. Falling back to default",
+          file=sys.stderr)
+    return default
+
+
 def _parse_int_env(name, default, *, minimum=None):
     raw = os.environ.get(name, str(default))
     try:
@@ -44,24 +66,13 @@ def _parse_int_env(name, default, *, minimum=None):
 
 
 def parse_config():
-    raw_urls = os.environ.get("TEST_URLS", "[]")
-    try:
-        parsed_urls = ast.literal_eval(raw_urls)
-    except (ValueError, SyntaxError):
-        parsed_urls = []
-
-    if isinstance(parsed_urls, str):
-        parsed_urls = [parsed_urls]
-    elif not isinstance(parsed_urls, (list, tuple)):
-        raise ValueError("TEST_URLS must be a URL string or list/tuple of URL strings")
-
-    urls = [u for u in parsed_urls if isinstance(u, str) and u]
+    urls = _parse_list_env("TEST_URLS", [])
 
     return {
         "urls": urls,
         "timeout": _parse_int_env("TEST_TIMEOUT", 30, minimum=1),
         "expiry_days": _parse_int_env("TEST_CERTIFICATE-EXPIRY-DAYS", 30, minimum=0),
-        "providence": os.environ.get("SPECIAL_SOURCE_FILE", "unknown"),
+        "provenance": os.environ.get("SPECIAL_SOURCE_FILE", "unknown"),
     }
 
 
@@ -215,7 +226,7 @@ def run_tests_for_url(url, config):
     return [run_expiry_test(url, config["timeout"], config["expiry_days"])]
 
 
-def create_junit_report(suite_name, results, output_file, special_key_append_properties, providence, suite_properties=None):
+def create_junit_report(suite_name, results, output_file, special_key_append_properties, provenance, suite_properties=None):
     suite = TestSuite(suite_name)
     suite.timestamp = datetime.now(timezone.utc).isoformat()
     if suite_properties is None:
@@ -257,15 +268,15 @@ def create_junit_report(suite_name, results, output_file, special_key_append_pro
         suite.add_testcase(case)
 
     for key, values in append_properties.items():
-        normalized_values = [str(v) for v in values if v is not None and str(v) != ""]
-        if normalized_values:
-            suite.add_property(key, ", ".join(normalized_values))
+        seen = dict.fromkeys(str(v) for v in values if v is not None and str(v) != "")
+        if seen:
+            suite.add_property(key, ", ".join(seen))
 
     if (timeout := suite_properties.get("timeout")) is not None:
         suite.add_property("timeout", str(timeout))
     if (expiry_days := suite_properties.get("expiry_days")) is not None:
         suite.add_property("certificate-expiry-days", str(expiry_days))
-    suite.add_property("providence", providence)
+    suite.add_property("provenance", provenance)
     suite.time = total_time
     xml = JUnitXml()
     xml.add_testsuite(suite)
@@ -287,6 +298,6 @@ if __name__ == "__main__":
     create_junit_report(
         suite_name, results, output_file=report_path,
         special_key_append_properties={"urls", "hostnames"},
-        providence=config["providence"],
+        provenance=config["provenance"],
         suite_properties=config,
     )

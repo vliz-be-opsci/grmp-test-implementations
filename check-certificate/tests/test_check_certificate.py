@@ -25,6 +25,8 @@ from check_certificate import (
     skipped_test,
     parse_config,
     create_junit_report,
+    _parse_list_env,
+    _parse_int_env,
 )
 
 
@@ -400,6 +402,45 @@ class TestRunTestsForUrl:
 
 
 # ---------------------------------------------------------------------------
+# _parse_list_env
+# ---------------------------------------------------------------------------
+
+class TestParseListEnv:
+    def test_returns_default_when_not_set(self, monkeypatch):
+        monkeypatch.delenv("TEST_FOO", raising=False)
+        assert _parse_list_env("TEST_FOO", ["a"]) == ["a"]
+
+    def test_parses_list_literal(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "['x', 'y']")
+        assert _parse_list_env("TEST_FOO", []) == ["x", "y"]
+
+    def test_wraps_quoted_string_in_list(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "'single'")
+        assert _parse_list_env("TEST_FOO", []) == ["single"]
+
+    def test_bare_unquoted_string_wrapped_in_list(self, monkeypatch):
+        # e.g. TEST_URLS=https://example.com in docker-compose
+        monkeypatch.setenv("TEST_FOO", "https://example.com")
+        assert _parse_list_env("TEST_FOO", []) == ["https://example.com"]
+
+    def test_syntactically_invalid_value_treated_as_bare_string(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "not valid{{")
+        assert _parse_list_env("TEST_FOO", ["default"]) == ["not valid{{"]
+
+    def test_filters_empty_strings(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "['a', '', 'b']")
+        assert _parse_list_env("TEST_FOO", []) == ["a", "b"]
+
+    def test_strips_whitespace_from_values(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "['https://a.com', '  https://b.com  ']")
+        assert _parse_list_env("TEST_FOO", []) == ["https://a.com", "https://b.com"]
+
+    def test_non_list_type_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TEST_FOO", "42")
+        assert _parse_list_env("TEST_FOO", ["default"]) == ["default"]
+
+
+# ---------------------------------------------------------------------------
 # parse_config
 # ---------------------------------------------------------------------------
 
@@ -416,19 +457,11 @@ class TestParseConfig:
         assert config["urls"] == []
         assert config["timeout"] == 30
         assert config["expiry_days"] == 30
-        assert config["providence"] == "unknown"
+        assert config["provenance"] == "unknown"
 
-    def test_single_url(self, monkeypatch):
+    def test_custom_urls(self, monkeypatch):
         monkeypatch.setenv("TEST_URLS", "['https://example.com']")
         assert parse_config()["urls"] == ["https://example.com"]
-
-    def test_multiple_urls(self, monkeypatch):
-        monkeypatch.setenv("TEST_URLS", "['https://a.com', 'https://b.com']")
-        assert len(parse_config()["urls"]) == 2
-
-    def test_invalid_urls_env_gives_empty_list(self, monkeypatch):
-        monkeypatch.setenv("TEST_URLS", "not-valid-python{{")
-        assert parse_config()["urls"] == []
 
     def test_custom_timeout(self, monkeypatch):
         monkeypatch.setenv("TEST_TIMEOUT", "60")
@@ -438,9 +471,9 @@ class TestParseConfig:
         monkeypatch.setenv("TEST_CERTIFICATE-EXPIRY-DAYS", "14")
         assert parse_config()["expiry_days"] == 14
 
-    def test_providence_from_env(self, monkeypatch):
+    def test_provenance_from_env(self, monkeypatch):
         monkeypatch.setenv("SPECIAL_SOURCE_FILE", "my-config.yaml")
-        assert parse_config()["providence"] == "my-config.yaml"
+        assert parse_config()["provenance"] == "my-config.yaml"
 
     def test_invalid_timeout_falls_back_to_default(self, monkeypatch):
         monkeypatch.setenv("TEST_TIMEOUT", "not-a-number")
@@ -484,7 +517,7 @@ class TestCreateJunitReport:
             "skipped": skipped,
             "skipped_message": "reason" if skipped else "",
             "stdout": "some output",
-            "stderr": "some err" if (failure or error) else "",
+            "stderr": "some err" if error else "",
         }
 
     def test_creates_xml_file(self, tmp_path):
@@ -507,10 +540,20 @@ class TestCreateJunitReport:
         create_junit_report("suite", [self._result(error=True)], out, set(), "test")
         assert "error" in open(out).read().lower()
 
-    def test_providence_present_in_xml(self, tmp_path):
+    def test_stderr_present_in_xml_on_error(self, tmp_path):
         out = str(tmp_path / "report.xml")
-        create_junit_report("suite", [self._result()], out, set(), "my-providence-value")
-        assert "my-providence-value" in open(out).read()
+        create_junit_report("suite", [self._result(error=True)], out, set(), "prov")
+        assert "some err" in open(out).read()
+
+    def test_stderr_absent_in_xml_on_failure(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        create_junit_report("suite", [self._result(failure=True)], out, set(), "prov")
+        assert "some err" not in open(out).read()
+
+    def test_provenance_present_in_xml(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        create_junit_report("suite", [self._result()], out, set(), "my-provenance-value")
+        assert "my-provenance-value" in open(out).read()
 
     def test_append_property_urls_comma_joined(self, tmp_path):
         out = str(tmp_path / "report.xml")
@@ -518,7 +561,15 @@ class TestCreateJunitReport:
         create_junit_report("suite", results, out, {"urls", "hostnames"}, "prov")
         content = open(out).read()
         assert 'name="urls"' in content
-        assert "https://example.com, https://example.com" in content
+        assert 'value="https://example.com"' in content
+
+    def test_append_property_urls_deduplicated(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        results = [self._result("t1"), self._result("t2")]  # both have same URL
+        create_junit_report("suite", results, out, {"urls", "hostnames"}, "prov")
+        content = open(out).read()
+        # same URL should appear only once, not twice
+        assert content.count("https://example.com") == 1
 
     def test_append_property_hostnames_comma_joined(self, tmp_path):
         out = str(tmp_path / "report.xml")
@@ -526,7 +577,7 @@ class TestCreateJunitReport:
         create_junit_report("suite", results, out, {"urls", "hostnames"}, "prov")
         content = open(out).read()
         assert 'name="hostnames"' in content
-        assert "example.com, example.com" in content
+        assert 'value="example.com"' in content
 
     def test_suite_time_equals_sum_of_durations(self, tmp_path):
         from junitparser import JUnitXml as JX

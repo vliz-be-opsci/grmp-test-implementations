@@ -26,28 +26,55 @@ def capture_output():
         yield out, err
 
 
-def parse_config():
-    raw_urls = os.environ.get("TEST_URLS", "[]")
+def _parse_list_env(name, default):
+    """
+    Parse an env variable expected to be a Python list literal, e.g. "['a', 'b']".
+    A bare string (not a valid Python literal) is treated as a single-element list,
+    so plain values like TEST_URLS=https://example.com work without extra quoting.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
     try:
-        parsed_urls = ast.literal_eval(raw_urls)
+        parsed = ast.literal_eval(raw)
     except (ValueError, SyntaxError):
-        parsed_urls = []
+        return [raw]
+    if isinstance(parsed, str):
+        return [parsed]
+    if isinstance(parsed, (list, tuple)):
+        return [v.strip() for v in parsed if isinstance(v, str) and v.strip()]
+    print(f"Invalid {name}={raw!r}; must be a list of strings. Falling back to default",
+          file=sys.stderr)
+    return default
 
-    if isinstance(parsed_urls, str):
-        parsed_urls = [parsed_urls]
-    elif not isinstance(parsed_urls, (list, tuple)):
-        raise ValueError("TEST_URLS must be a URL string or list/tuple of URL strings")
 
-    urls = [u for u in parsed_urls if isinstance(u, str) and u]
+def _parse_int_env(name, default, *, minimum=None):
+    raw = os.environ.get(name, str(default))
+    try:
+        value = int(raw)
+    except ValueError:
+        print(f"Invalid {name}={raw!r}; falling back to {default}", file=sys.stderr)
+        return default
+    if minimum is not None and value < minimum:
+        print(
+            f"Invalid {name}={raw!r}; must be >= {minimum}. Falling back to {default}",
+            file=sys.stderr,
+        )
+        return default
+    return value
+
+
+def parse_config():
+    urls = _parse_list_env("TEST_URLS", [])
 
     return {
         "urls": urls,
-        "max_redirects": int(os.environ.get("TEST_MAX-REDIRECTS", "0")),
-        "timeout": int(os.environ.get("TEST_TIMEOUT", "30")),
+        "max_redirects": _parse_int_env("TEST_MAX-REDIRECTS", 0, minimum=0),
+        "timeout": _parse_int_env("TEST_TIMEOUT", 30, minimum=1),
         "check_http": os.environ.get("TEST_CHECK-HTTP-AVAILABILITY", "false").lower() == "true",
         "check_https": os.environ.get("TEST_CHECK-HTTPS-AVAILABILITY", "true").lower() == "true",
         "verify_ssl": os.environ.get("TEST_VERIFY-SSL", "true").lower() == "true",
-        "providence":os.environ.get("SPECIAL_SOURCE_FILE", "unknown"), 
+        "provenance":os.environ.get("SPECIAL_SOURCE_FILE", "unknown"), 
     }
 
 
@@ -168,7 +195,7 @@ def run_dns_test(url):
         if ip:
             print(f"resolved_ip: {ip}")
         else:
-            print(f"DNS resolution failed: {dns_error}", file=sys.stderr)
+            print(f"DNS resolution failed: {dns_error}")
             failure_message = f"DNS resolution failed for {hostname}"
             failure_text = dns_error
 
@@ -225,9 +252,9 @@ def run_availability_test(url, scheme, timeout, max_redirects, verify_ssl=True):
                 print(msg, file=sys.stderr)
                 error = msg
             elif err_msg:
-                print(f"Checking {scheme.upper()} availability for: {target_url}", file=sys.stderr)
-                print(f"Timeout: {timeout}s, Max redirects: {max_redirects}, Verify SSL: {effective_verify_ssl}", file=sys.stderr)
-                print(f"Availability check failed: {err_msg}", file=sys.stderr)
+                print(f"Checking {scheme.upper()} availability for: {target_url}")
+                print(f"Timeout: {timeout}s, Max redirects: {max_redirects}, Verify SSL: {effective_verify_ssl}")
+                print(f"Availability check failed: {err_msg}")
                 failure_message = f"{scheme.upper()} availability check failed"
                 failure_text = err_msg
             else:
@@ -271,9 +298,11 @@ def run_tests_for_url(url, config):
 
     return results
 
-def create_junit_report(suite_name, results, output_file, special_key_append_properties, providence):
+def create_junit_report(suite_name, results, output_file, special_key_append_properties, provenance, suite_properties=None):
     suite = TestSuite(suite_name)
     suite.timestamp = datetime.now(timezone.utc).isoformat()
+    if suite_properties is None:
+        suite_properties = {}
     total_time = 0.0
     added_properties = set()
     append_properties = {}  # key -> list of values to be appended
@@ -308,11 +337,21 @@ def create_junit_report(suite_name, results, output_file, special_key_append_pro
         suite.add_testcase(case)
 
     for key, values in append_properties.items():
-        normalized_values = [str(v) for v in values if v is not None and str(v) != ""]
-        if normalized_values:
-            suite.add_property(key, ", ".join(normalized_values))
+        seen = dict.fromkeys(str(v) for v in values if v is not None and str(v) != "")
+        if seen:
+            suite.add_property(key, ", ".join(seen))
 
-    suite.add_property("providence", providence)
+    if (timeout := suite_properties.get("timeout")) is not None:
+        suite.add_property("timeout", str(timeout))
+    if (max_redirects := suite_properties.get("max_redirects")) is not None:
+        suite.add_property("max-redirects", str(max_redirects))
+    if (check_http := suite_properties.get("check_http")) is not None:
+        suite.add_property("check-http-availability", str(check_http).lower())
+    if (check_https := suite_properties.get("check_https")) is not None:
+        suite.add_property("check-https-availability", str(check_https).lower())
+    if (verify_ssl := suite_properties.get("verify_ssl")) is not None:
+        suite.add_property("verify-ssl", str(verify_ssl).lower())
+    suite.add_property("provenance", provenance)
     suite.time = total_time
     xml = JUnitXml()
     xml.add_testsuite(suite)
@@ -330,4 +369,9 @@ if __name__ == "__main__":
             results.extend(run_tests_for_url(url, config))
 
     report_path = f"/reports/{suite_name}_report.xml"
-    create_junit_report(suite_name, results, output_file=report_path, special_key_append_properties={'urls', 'hostnames'}, providence=config["providence"])
+    create_junit_report(
+        suite_name, results, output_file=report_path,
+        special_key_append_properties={"urls", "hostnames"},
+        provenance=config["provenance"],
+        suite_properties=config,
+    )
