@@ -62,7 +62,7 @@ def parse_config():
         "data_urls": data_urls,
         "shapes_url": os.environ.get("TEST_SHAPES_URL", ""),
         "timeout": _parse_int_env("TEST_TIMEOUT", 30, minimum=1),
-        "providence": os.environ.get("SPECIAL_SOURCE_FILE", "unknown"),
+        "provenance": os.environ.get("SPECIAL_SOURCE_FILE", "unknown"),
     }
 
 
