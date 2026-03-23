@@ -61,6 +61,7 @@ class TestParseConfig:
         "TEST_CHECK-RESPONSE-BODY-CONFORMITY",
         "TEST_TIMEOUT",
         "SPECIAL_SOURCE_FILE",
+        "SPECIAL_CREATE_ISSUE",
     ]
 
     def _clean(self, monkeypatch):
@@ -75,6 +76,7 @@ class TestParseConfig:
         assert config["check_body_conformity"] is None
         assert config["timeout"] == 30
         assert config["provenance"] == "unknown"
+        assert config["create_issue"] is False
 
     def test_custom_urls(self, monkeypatch):
         monkeypatch.setenv("TEST_URLS", "['https://example.com']")
@@ -115,6 +117,14 @@ class TestParseConfig:
     def test_provenance(self, monkeypatch):
         monkeypatch.setenv("SPECIAL_SOURCE_FILE", "my-config.yaml")
         assert parse_config()["provenance"] == "my-config.yaml"
+
+    def test_create_issue_defaults_to_false(self, monkeypatch):
+        monkeypatch.delenv("SPECIAL_CREATE_ISSUE", raising=False)
+        assert parse_config()["create_issue"] is False
+
+    def test_create_issue_true_when_set(self, monkeypatch):
+        monkeypatch.setenv("SPECIAL_CREATE_ISSUE", "true")
+        assert parse_config()["create_issue"] is True
 
 
 # ---------------------------------------------------------------------------

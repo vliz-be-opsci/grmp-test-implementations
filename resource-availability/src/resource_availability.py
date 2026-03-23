@@ -75,6 +75,7 @@ def parse_config():
         "check_https": os.environ.get("TEST_CHECK-HTTPS-AVAILABILITY", "true").lower() == "true",
         "verify_ssl": os.environ.get("TEST_VERIFY-SSL", "true").lower() == "true",
         "provenance":os.environ.get("SPECIAL_SOURCE_FILE", "unknown"), 
+        "create_issue": os.environ.get("SPECIAL_CREATE_ISSUE", "false").lower() == "true",
     }
 
 
@@ -352,6 +353,7 @@ def create_junit_report(suite_name, results, output_file, special_key_append_pro
     if (verify_ssl := suite_properties.get("verify_ssl")) is not None:
         suite.add_property("verify-ssl", str(verify_ssl).lower())
     suite.add_property("provenance", provenance)
+    suite.add_property("create-issue", str(suite_properties.get("create_issue", False)).lower())
     suite.time = total_time
     xml = JUnitXml()
     xml.add_testsuite(suite)

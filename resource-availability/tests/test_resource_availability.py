@@ -396,7 +396,7 @@ class TestParseListEnv:
 class TestParseConfig:
     ENV_KEYS = ["TEST_URLS", "TEST_TIMEOUT", "TEST_MAX-REDIRECTS",
                 "TEST_CHECK-HTTP-AVAILABILITY", "TEST_CHECK-HTTPS-AVAILABILITY",
-                "TEST_VERIFY-SSL", "SPECIAL_SOURCE_FILE"]
+                "TEST_VERIFY-SSL", "SPECIAL_SOURCE_FILE", "SPECIAL_CREATE_ISSUE"]
 
     def _clean(self, monkeypatch):
         for k in self.ENV_KEYS:
@@ -412,6 +412,7 @@ class TestParseConfig:
         assert config["check_https"] is True
         assert config["verify_ssl"] is True
         assert config["provenance"] == "unknown"
+        assert config["create_issue"] is False
 
     def test_custom_urls(self, monkeypatch):
         monkeypatch.setenv("TEST_URLS", "['https://example.com']")
@@ -465,6 +466,14 @@ class TestParseConfig:
         monkeypatch.setenv("SPECIAL_SOURCE_FILE", "my-config.yaml")
         assert parse_config()["provenance"] == "my-config.yaml"
 
+    def test_create_issue_defaults_to_false(self, monkeypatch):
+        monkeypatch.delenv("SPECIAL_CREATE_ISSUE", raising=False)
+        assert parse_config()["create_issue"] is False
+
+    def test_create_issue_true_when_set(self, monkeypatch):
+        monkeypatch.setenv("SPECIAL_CREATE_ISSUE", "true")
+        assert parse_config()["create_issue"] is True
+
 
 # ---------------------------------------------------------------------------
 # create_junit_report
@@ -511,6 +520,12 @@ class TestCreateJunitReport:
         out = str(tmp_path / "report.xml")
         create_junit_report("suite", [self._result(failure=True)], out, set(), "prov")
         assert "some err" not in open(out).read()
+
+    def test_create_issue_present_in_xml(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        create_junit_report("suite", [self._result()], out, {"urls", "hostnames"}, "prov",
+                            suite_properties={"create_issue": True})
+        assert 'name="create-issue" value="true"' in open(out).read()
 
     def test_provenance_present_in_xml(self, tmp_path):
         out = str(tmp_path / "report.xml")

@@ -104,6 +104,7 @@ def parse_config():
         "check_body_conformity": check_body_conformity,
         "timeout": _parse_int_env("TEST_TIMEOUT", 30, minimum=1),
         "provenance": os.environ.get("SPECIAL_SOURCE_FILE", "unknown"),
+        "create_issue": os.environ.get("SPECIAL_CREATE_ISSUE", "false").lower() == "true",
     }
 
 
@@ -445,6 +446,7 @@ def create_junit_report(suite_name, results, output_file, special_key_append_pro
     if (check_body := suite_properties.get("check_body_conformity")) is not None:
         suite.add_property("check-response-body-conformity", str(check_body).lower())
     suite.add_property("provenance", provenance)
+    suite.add_property("create-issue", str(suite_properties.get("create_issue", False)).lower())
     suite.time = total_time
     xml = JUnitXml()
     xml.add_testsuite(suite)

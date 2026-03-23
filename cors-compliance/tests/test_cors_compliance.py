@@ -143,7 +143,7 @@ class TestParseConfig:
         "TEST_URLS", "TEST_ACCESS-CONTROL-ALLOW-ORIGIN",
         "TEST_ACCESS-CONTROL-ALLOW-METHODS", "TEST_ACCESS-CONTROL-ALLOW-HEADERS",
         "TEST_ACCESS-CONTROL-EXPOSE-HEADERS", "TEST_HTTPS-REDIRECT",
-        "TEST_PROBE-ORIGIN", "TEST_TIMEOUT", "SPECIAL_SOURCE_FILE",
+        "TEST_PROBE-ORIGIN", "TEST_TIMEOUT", "SPECIAL_SOURCE_FILE", "SPECIAL_CREATE_ISSUE",
     ]
 
     def _clean(self, monkeypatch):
@@ -162,6 +162,7 @@ class TestParseConfig:
         assert config["probe_origin"] == "https://vliz.be"
         assert config["timeout"] == 30
         assert config["provenance"] == "unknown"
+        assert config["create_issue"] is False
 
     def test_custom_urls(self, monkeypatch):
         monkeypatch.setenv("TEST_URLS", "['https://example.com']")
@@ -202,6 +203,14 @@ class TestParseConfig:
     def test_provenance_from_env(self, monkeypatch):
         monkeypatch.setenv("SPECIAL_SOURCE_FILE", "my-config.yaml")
         assert parse_config()["provenance"] == "my-config.yaml"
+
+    def test_create_issue_defaults_to_false(self, monkeypatch):
+        monkeypatch.delenv("SPECIAL_CREATE_ISSUE", raising=False)
+        assert parse_config()["create_issue"] is False
+
+    def test_create_issue_true_when_set(self, monkeypatch):
+        monkeypatch.setenv("SPECIAL_CREATE_ISSUE", "true")
+        assert parse_config()["create_issue"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -754,6 +763,12 @@ class TestCreateJunitReport:
         out = str(tmp_path / "report.xml")
         create_junit_report("suite", [self._result(error=True)], out, set(), "prov")
         assert "error" in open(out).read().lower()
+
+    def test_create_issue_present_in_xml(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        create_junit_report("suite", [self._result()], out, set(), "prov",
+                            suite_properties={"create_issue": True})
+        assert 'name="create-issue" value="true"' in open(out).read()
 
     def test_provenance_present_in_xml(self, tmp_path):
         out = str(tmp_path / "report.xml")
