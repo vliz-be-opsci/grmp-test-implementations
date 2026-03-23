@@ -35,6 +35,7 @@ class TestParseConfig:
             if key.startswith("TEST_"):
                 monkeypatch.delenv(key, raising=False)
         monkeypatch.delenv("SPECIAL_SOURCE_FILE", raising=False)
+        monkeypatch.delenv("SPECIAL_CREATE_ISSUE", raising=False)
 
     def test_collects_test_prefixed_vars(self, monkeypatch):
         self._clean_test_vars(monkeypatch)
@@ -68,6 +69,14 @@ class TestParseConfig:
     def test_provenance_defaults_to_unknown(self, monkeypatch):
         monkeypatch.delenv("SPECIAL_SOURCE_FILE", raising=False)
         assert parse_config()["provenance"] == "unknown"
+
+    def test_create_issue_defaults_to_false(self, monkeypatch):
+        monkeypatch.delenv("SPECIAL_CREATE_ISSUE", raising=False)
+        assert parse_config()["create_issue"] is False
+
+    def test_create_issue_true_when_set(self, monkeypatch):
+        monkeypatch.setenv("SPECIAL_CREATE_ISSUE", "true")
+        assert parse_config()["create_issue"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +216,12 @@ class TestCreateJunitReport:
         out = str(tmp_path / "report.xml")
         create_junit_report("suite", [self._result(error=True)], out, "prov")
         assert "error" in open(out).read().lower()
+
+    def test_create_issue_present_in_xml(self, tmp_path):
+        out = str(tmp_path / "report.xml")
+        create_junit_report("suite", [self._result()], out, "prov",
+                            suite_properties={"create_issue": True})
+        assert 'name="create-issue" value="true"' in open(out).read()
 
     def test_provenance_present_in_xml(self, tmp_path):
         out = str(tmp_path / "report.xml")

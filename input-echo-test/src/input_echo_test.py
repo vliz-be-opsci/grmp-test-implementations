@@ -49,6 +49,7 @@ def parse_config():
     return {
         "params": params,
         "provenance": os.environ.get("SPECIAL_SOURCE_FILE", "unknown"),
+        "create_issue": os.environ.get("SPECIAL_CREATE_ISSUE", "false").lower() == "true",
     }
 
 
@@ -189,6 +190,7 @@ def create_junit_report(suite_name, results, output_file, provenance,
         suite.add_testcase(case)
 
     suite.add_property("provenance", provenance)
+    suite.add_property("create-issue", str(suite_properties.get("create_issue", False)).lower())
     suite.time = total_time
     xml = JUnitXml()
     xml.add_testsuite(suite)

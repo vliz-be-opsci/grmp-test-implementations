@@ -131,6 +131,7 @@ def parse_config():
         "probe_origin": os.environ.get("TEST_PROBE-ORIGIN", "https://vliz.be"),
         "timeout": _parse_int_env("TEST_TIMEOUT", 30, minimum=1),
         "provenance": os.environ.get("SPECIAL_SOURCE_FILE", "unknown"),
+        "create_issue": os.environ.get("SPECIAL_CREATE_ISSUE", "false").lower() == "true",
     }
 
 
@@ -686,6 +687,7 @@ def create_junit_report(suite_name, results, output_file, special_key_append_pro
     if (probe_origin := suite_properties.get("probe_origin")) is not None:
         suite.add_property("probe-origin", probe_origin)
     suite.add_property("provenance", provenance)
+    suite.add_property("create-issue", str(suite_properties.get("create_issue", False)).lower())
     suite.time = total_time
     xml = JUnitXml()
     xml.add_testsuite(suite)
