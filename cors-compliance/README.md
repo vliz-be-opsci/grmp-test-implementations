@@ -13,6 +13,18 @@ SSL certificate validity is intentionally not verified — that is the responsib
 
 ---
 
+## Local Testing
+
+A `docker-compose.yml` is included in this directory for running the test locally without the orchestrator. It is intended as a working example — edit the environment variables to match your own URLs and expected headers before running:
+
+```bash
+docker-compose up
+```
+
+The report will be written to `./reports/localtestrun_report.xml`.
+
+---
+
 ## Configuration Parameters
 
 ### `urls`
@@ -22,6 +34,12 @@ SSL certificate validity is intentionally not verified — that is the responsib
 urls:
   - https://example.com/stream
   - https://other.org/data
+```
+
+A bare string is also accepted without list syntax:
+
+```yaml
+urls: https://example.com
 ```
 
 If absent or empty, the test is skipped entirely.
@@ -136,6 +154,23 @@ Default: `30`
 ```yaml
 timeout: 10
 ```
+
+---
+
+## Test Cases Produced
+
+For each URL the following test cases are produced, depending on configuration:
+
+| Test case | Always produced | Condition |
+| --- | --- | --- |
+| `access_control_allow_origin [url] [lenient]` | Yes | When `access-control-allow-origin` is absent (lenient mode) |
+| `access_control_allow_origin [url] [origin]` | No | One per configured origin in specific origin mode |
+| `access_control_allow_methods [url]` | No | `access-control-allow-methods` is configured |
+| `access_control_allow_headers [url]` | No | `access-control-allow-headers` is configured |
+| `access_control_expose_headers [url]` | No | `access-control-expose-headers` is configured |
+| `https_redirect [url]` | No | `https-redirect: true` |
+
+If the `probe-origin` is the same origin as the URL being tested, all test cases for that URL are replaced with a single skipped result explaining the misconfiguration.
 
 ---
 
