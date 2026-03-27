@@ -164,6 +164,7 @@ For each URL the following test cases are produced, depending on configuration:
 | Test case | Always produced | Condition |
 | --- | --- | --- |
 | `access_control_allow_origin [url] [lenient]` | Yes | When `access-control-allow-origin` is absent (lenient mode) |
+| `access_control_allow_origin [url] [*]` | No | When `access-control-allow-origin: '*'` (wildcard mode) |
 | `access_control_allow_origin [url] [origin]` | No | One per configured origin in specific origin mode |
 | `access_control_allow_methods [url]` | No | `access-control-allow-methods` is configured |
 | `access_control_allow_headers [url]` | No | `access-control-allow-headers` is configured |
