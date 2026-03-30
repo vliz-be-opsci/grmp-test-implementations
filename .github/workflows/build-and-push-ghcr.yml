@@ -121,3 +121,4 @@ jobs:
           file: ${{ matrix.test }}/Dockerfile
           push: true
           tags: ${{ steps.tags.outputs.TAGS }}
+          platforms: linux/amd64,linux/arm64
