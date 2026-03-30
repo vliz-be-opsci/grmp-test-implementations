@@ -19,7 +19,7 @@ If DNS resolution fails for a URL, the HTTP and HTTPS availability checks for th
 A `docker-compose.yml` is included in this directory for running the test locally without the orchestrator. It is intended as a working example — edit the environment variables to match your own URLs and settings before running:
 
 ```bash
-docker-compose up
+docker-compose up --build
 ```
 
 The report will be written to `./reports/localtestrun_report.xml`.

@@ -18,7 +18,7 @@ This test is primarily aimed at resources that serve RDF or linked data formats,
 A `docker-compose.yml` is included in this directory for running the test locally without the orchestrator. It is intended as a working example — edit the environment variables to match your own URLs and `Accept` headers before running:
 
 ```bash
-docker-compose up
+docker-compose up --build
 ```
 
 The report will be written to `./reports/localtestrun_report.xml`.
