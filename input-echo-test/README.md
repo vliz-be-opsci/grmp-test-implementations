@@ -16,7 +16,7 @@ Two test cases are produced:
 A `docker-compose.yml` is included in this directory for running the test locally without the orchestrator. The included example deliberately sets one empty variable (`TEST_EMPTY_VAR`) to demonstrate what a failure looks like:
 
 ```bash
-docker-compose up
+docker-compose up --build
 ```
 
 The report will be written to `./reports/localtestrun_report.xml`.

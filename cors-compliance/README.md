@@ -18,7 +18,7 @@ SSL certificate validity is intentionally not verified — that is the responsib
 A `docker-compose.yml` is included in this directory for running the test locally without the orchestrator. It is intended as a working example — edit the environment variables to match your own URLs and expected headers before running:
 
 ```bash
-docker-compose up
+docker-compose up --build
 ```
 
 The report will be written to `./reports/localtestrun_report.xml`.
