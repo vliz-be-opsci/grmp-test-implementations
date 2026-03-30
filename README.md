@@ -1,15 +1,15 @@
 # GRMP Tests
 
-A series of tests within the grmp framework. They are meant to run as containers while being managed by the grmp orchestrator.
+A series of tests within the GRMP framework. They are meant to run as containers while being managed by the GRMP orchestrator.
 
 ### 1 Input Echo Test
 
-A simple test meant as an example. It takes the configuration parameters from an input yml and tests:
+A simple test meant as an example. It takes the configuration parameters from an input YAML and tests:
 
 1) whether the number of configuration parameters > 0
-2) whether the value of each configuration parameter is not empty/None
+2) whether the value of each configuration parameter is not empty or `None`
 
-It then creates a JUNIT XML file containing the results of the aforementioned tests and adds the configuration parameters, the number of configuration parameters and the number of empty parameters as testsuite properties.
+It then creates a JUnit XML file containing the results and adds the configuration parameters as testsuite properties. Parameter counts are reported in the test case output rather than as properties.
 
 ### 2 Resource Availability
 
@@ -19,31 +19,35 @@ Checks DNS resolution and HTTP/HTTPS availability for one or more URLs. For each
 2) whether the resource is reachable over HTTP (optional)
 3) whether the resource is reachable over HTTPS (optional)
 
-Redirect handling is configurable via a maximum redirect count. Redirects that cross the HTTP/HTTPS scheme boundary are treated as informational rather than failures. It then creates a JUNIT XML file containing the results and adds the tested URLs and hostnames as testsuite properties.
+Redirect handling is configurable via a maximum redirect count. Redirects that cross the HTTP/HTTPS scheme boundary are treated as informational rather than failures. It then creates a JUnit XML file containing the results and adds the tested URLs, hostnames and all configuration parameters as testsuite properties.
 
 ### 3 Check Certificate
 
-Checks the TLS certificate expiration for one or more URLs. For each URL it tests:
-
-1) whether the certificate can be retrieved
-2) whether the certificate has not expired
-3) whether the certificate expiry is not within a configurable threshold of days
-
-It then creates a JUNIT XML file containing the results and adds the tested URLs, hostnames, timeout and certificate expiry threshold as testsuite properties.
+Checks the TLS certificate expiration for one or more URLs. For each URL it produces a single test case that checks whether the certificate can be retrieved, whether it has already expired, and whether it will expire within a configurable threshold of days. SSL verification is intentionally disabled during retrieval so that expired certificates can still be evaluated. It then creates a JUnit XML file containing the results and adds the tested URLs, hostnames, timeout and certificate expiry threshold as testsuite properties.
 
 ### 4 CORS Compliance
 
 Checks CORS header compliance for one or more URLs. For each URL it tests:
 
 1) whether `access-control-allow-origin` correctly allows the configured origin(s)
-2) whether `access-control-allow-methods` advertises at least the configured methods
-3) whether `access-control-allow-headers` advertises at least the configured headers
-4) whether `access-control-expose-headers` exposes at least the configured headers
+2) whether `access-control-allow-methods` advertises at least the configured methods (optional)
+3) whether `access-control-allow-headers` advertises at least the configured headers (optional)
+4) whether `access-control-expose-headers` exposes at least the configured headers (optional)
 5) whether HTTP redirects to HTTPS and whether CORS headers survive the redirect (optional)
 
-Origin and method/header checks use an OPTIONS preflight request; expose-header checks use a GET request. SSL certificate validity is intentionally not checked as that is the responsibility of the Check Certificate test. It then creates a JUNIT XML file containing the results and adds the tested URLs, hostnames and all configuration parameters as testsuite properties.
+Origin checks use an OPTIONS preflight request; expose-header checks use a GET request. It then creates a JUnit XML file containing the results and adds the tested URLs, hostnames and all configuration parameters as testsuite properties.
 
-### 5 SHACL Validation
+### 5 Content Negotiation
+
+Checks whether one or more URLs correctly honour HTTP content negotiation via the `Accept` request header. For each URL and configured `Accept` header value it tests:
+
+1) whether the server responds with a `2xx` status code
+2) whether the response `Content-Type` matches the requested type(s)
+3) whether the response body conforms to its advertised content type (optional, RDF types only)
+
+Both simple `Accept` headers (single type, exact match) and complex headers (multiple types with quality weights, subset match) are supported. Body conformity is checked by parsing the response body using rdflib. It then creates a JUnit XML file containing the results and adds the tested URLs, hostnames and all configuration parameters as testsuite properties.
+
+### 6 SHACL Validation
 
 Checks whether RDF graphs harvested from one or more data URLs conform to a given SHACL shapes graph. For each data URL it:
 
@@ -51,4 +55,4 @@ Checks whether RDF graphs harvested from one or more data URLs conform to a give
 2) validates the data graph against the SHACL shapes graph using `pyshacl`
 3) reports conformance (pass) or non-conformance with the validation report text (fail)
 
-The shapes graph is harvested once from the configured `TEST_SHAPES_URL`. It then creates a JUNIT XML file containing the results and adds the shapes URL and all tested data URLs as testsuite properties.
+The shapes graph is harvested once from the configured `TEST_SHAPES_URL`. It then creates a JUnit XML file containing the results and adds the shapes URL and all tested data URLs as testsuite properties.
