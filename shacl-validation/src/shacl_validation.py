@@ -154,7 +154,7 @@ def run_shacl_test(data_url, shapes_graph):
     }
 
 
-def create_junit_report(suite_name, results, output_file, shapes_url, providence):
+def create_junit_report(suite_name, results, output_file, shapes_url, provenance):
     suite = TestSuite(suite_name)
     suite.timestamp = datetime.now(timezone.utc).isoformat()
     total_time = 0.0
@@ -191,7 +191,7 @@ def create_junit_report(suite_name, results, output_file, shapes_url, providence
         suite.add_property("shapes_url", shapes_url)
     if append_data_urls:
         suite.add_property("data_urls", ", ".join(append_data_urls))
-    suite.add_property("providence", providence)
+    suite.add_property("provenance", provenance)
     suite.time = total_time
     xml = JUnitXml()
     xml.add_testsuite(suite)
@@ -227,5 +227,5 @@ if __name__ == "__main__":
         results,
         output_file=report_path,
         shapes_url=shapes_url,
-        providence=config["providence"],
+        provenance=config["provenance"],
     )

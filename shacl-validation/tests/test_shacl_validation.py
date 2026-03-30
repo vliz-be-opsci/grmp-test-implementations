@@ -53,7 +53,7 @@ class TestParseConfig:
         assert config["data_urls"] == []
         assert config["shapes_url"] == ""
         assert config["timeout"] == 30
-        assert config["providence"] == "unknown"
+        assert config["provenance"] == "unknown"
 
     def test_single_url_string(self, monkeypatch):
         # A quoted string is a valid Python literal so ast.literal_eval returns a str
@@ -94,10 +94,10 @@ class TestParseConfig:
         config = parse_config()
         assert config["timeout"] == 30
 
-    def test_providence(self, monkeypatch):
+    def test_provenance(self, monkeypatch):
         monkeypatch.setenv("SPECIAL_SOURCE_FILE", "my_source.yaml")
         config = parse_config()
-        assert config["providence"] == "my_source.yaml"
+        assert config["provenance"] == "my_source.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +192,7 @@ class TestSkippedTest:
 # ---------------------------------------------------------------------------
 
 class TestCreateJunitReport:
-    def _write_and_parse(self, results, shapes_url="", providence="test-prov"):
+    def _write_and_parse(self, results, shapes_url="", provenance="test-prov"):
         from junitparser import JUnitXml
         with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as f:
             path = f.name
@@ -202,7 +202,7 @@ class TestCreateJunitReport:
                 results,
                 output_file=path,
                 shapes_url=shapes_url,
-                providence=providence,
+                provenance=provenance,
             )
             xml = JUnitXml.fromfile(path)
             return list(xml)
@@ -309,9 +309,9 @@ class TestCreateJunitReport:
         assert "data_urls" in props
         assert "https://example.org/data" in props["data_urls"]
 
-    def test_providence_property(self):
+    def test_provenance_property(self):
         results = [skipped_test("shacl_validation", "no config")]
-        suites = self._write_and_parse(results, providence="my_providence_file.yaml")
+        suites = self._write_and_parse(results, provenance="my_provenance_file.yaml")
         suite = suites[0]
         props = {p.name: p.value for p in suite.properties()}
-        assert props.get("providence") == "my_providence_file.yaml"
+        assert props.get("provenance") == "my_provenance_file.yaml"
