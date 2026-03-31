@@ -3,8 +3,9 @@
 LDES Validation Test
 Fetches RDF graphs from one or more URLs and validates them as Linked Data
 Event Streams (LDES), checking for ldes:EventStream declarations, tree:view
-relations, minimum member and fragment counts, and optional SHACL validation
-of retrieved members, then writes a JUnit XML report.
+relations, minimum member and fragment counts, optional SHACL validation
+of retrieved members, and optional per-fragment SHACL validation, then
+writes a JUnit XML report.
 """
 
 import ast
@@ -99,6 +100,7 @@ def parse_config():
             "TEST_MAX-AGE-YOUNGEST-MEMBER", 0, minimum=0
         ),
         "shapes_url": os.environ.get("TEST_SHAPES-URL", ""),
+        "fragment_shapes_url": os.environ.get("TEST_FRAGMENT-SHAPES-URL", ""),
         "provenance": os.environ.get("SPECIAL_SOURCE_FILE", "unknown"),
         "create_issue": os.environ.get("SPECIAL_CREATE_ISSUE", "false").lower()
         == "true",
@@ -151,7 +153,29 @@ def fetch_shapes_graph(url, timeout=30):
     return fetch_rdf_graph(url, timeout=timeout)
 
 
-def traverse_ldes_feed(root_url, root_graph, timeout=30, max_fragments=None):
+def _validate_fragment_graph(data_graph, shapes_graph, fragment_url):
+    """
+    Validate a single fragment graph against a SHACL shapes graph.
+
+    Returns:
+        (conforms, results_text) where conforms is True/False/None
+        (None on engine error) and results_text is the SHACL report text.
+    """
+    try:
+        conforms, _results_graph, results_text = shacl_validate(
+            data_graph, shacl_graph=shapes_graph,
+        )
+        return conforms, results_text or ""
+    except Exception as e:
+        print(
+            f"SHACL fragment validation error for {fragment_url}: {e}",
+            file=sys.stderr,
+        )
+        return None, str(e)
+
+
+def traverse_ldes_feed(root_url, root_graph, timeout=30, max_fragments=None,
+                        fragment_shapes_graph=None):
     """
     Traverse an LDES feed by following tree:node links discovered via
     tree:Relation nodes.  Starting from the tree:view targets declared in
@@ -159,24 +183,38 @@ def traverse_ldes_feed(root_url, root_graph, timeout=30, max_fragments=None):
     links are followed recursively.  A visited-set prevents infinite loops.
 
     Args:
-        root_url      – URL of the root page (already fetched into root_graph)
-        root_graph    – pre-fetched rdflib.Graph of the root page
-        timeout       – HTTP request timeout in seconds
-        max_fragments – if given, traversal stops once this many fragment pages
-                        have been successfully fetched (root counts as one).
-                        None means traverse the entire feed.
+        root_url               – URL of the root page (already fetched into root_graph)
+        root_graph             – pre-fetched rdflib.Graph of the root page
+        timeout                – HTTP request timeout in seconds
+        max_fragments          – if given, traversal stops once this many fragment pages
+                                have been successfully fetched (root counts as one).
+                                None means traverse the entire feed.
+        fragment_shapes_graph  – optional SHACL shapes graph.  When provided, each
+                                successfully fetched fragment is validated against
+                                these shapes.
 
     Returns:
         merged_graph   – rdflib.Graph merging all successfully visited pages
         traversed_urls – set of page URLs successfully fetched (including root)
         errors         – list of (url, error_string) for pages that could not
                          be fetched or parsed
+        fragment_validation – dict mapping each traversed fragment URL to a
+                             tuple (conforms: bool|None, results_text: str).
+                             conforms is None on SHACL engine error.
     """
     visited = {root_url}
     merged = Graph()
     for triple in root_graph:
         merged.add(triple)
     traversed_urls = {root_url}
+
+    # Validate the root fragment against shapes (if provided)
+    fragment_validation = {}
+    if fragment_shapes_graph is not None:
+        conforms, results_text = _validate_fragment_graph(
+            root_graph, fragment_shapes_graph, root_url,
+        )
+        fragment_validation[root_url] = (conforms, results_text)
 
     # Seed the queue with tree:view targets declared in the root page
     queue = []
@@ -210,13 +248,20 @@ def traverse_ldes_feed(root_url, root_graph, timeout=30, max_fragments=None):
         for triple in page_graph:
             merged.add(triple)
 
+        # Validate this fragment against the SHACL shapes (if provided)
+        if fragment_shapes_graph is not None:
+            conforms, results_text = _validate_fragment_graph(
+                page_graph, fragment_shapes_graph, fragment_url,
+            )
+            fragment_validation[fragment_url] = (conforms, results_text)
+
         # Discover child fragments via tree:node predicates
         for child_node in page_graph.objects(predicate=TREE.node):
             child_url = str(child_node)
             if child_url not in visited:
                 queue.append(child_url)
 
-    return merged, traversed_urls, errors
+    return merged, traversed_urls, errors, fragment_validation
 
 
 def find_youngest_member_timestamp(graph):
@@ -272,11 +317,12 @@ def skipped_test(case_name, reason):
 
 
 def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0,
-                        shapes_graph=None, max_age_youngest_member=0):
+                        shapes_graph=None, max_age_youngest_member=0,
+                        fragment_shapes_graph=None):
     """
     Validate a URL as an LDES event stream.
 
-    Returns a list of result dicts (3 to 7 depending on configuration):
+    Returns a list of result dicts (3 to 8 depending on configuration):
     1. ldes_harvest                  - can the URL be fetched and parsed as RDF?
     2. ldes_event_stream             - does the graph declare an ldes:EventStream?
     3. ldes_tree_view                - does the event stream expose a tree:view?
@@ -297,8 +343,11 @@ def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0,
                                        tree:member at most max_age_youngest_member
                                        hours old?
                                        (only when max_age_youngest_member > 0)
+    8. ldes_fragment_shacl           - does each traversed fragment individually
+                                       conform to the fragment SHACL shape?
+                                       (only when fragment_shapes_graph is provided)
 
-    Optional checks (4-7) traverse the LDES feed via tree:node links before
+    Optional checks (4-8) traverse the LDES feed via tree:node links before
     evaluating.  When min_fragments is set, traversal stops early once that
     many fragments have been reached; otherwise the full feed is traversed.
     """
@@ -356,6 +405,12 @@ def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0,
             results.append(
                 skipped_test(
                     f"ldes_max_age_youngest_member [{url}]", "RDF harvest failed"
+                )
+            )
+        if fragment_shapes_graph is not None:
+            results.append(
+                skipped_test(
+                    f"ldes_fragment_shacl [{url}]", "RDF harvest failed"
                 )
             )
         return results
@@ -425,6 +480,13 @@ def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0,
                     "No ldes:EventStream found",
                 )
             )
+        if fragment_shapes_graph is not None:
+            results.append(
+                skipped_test(
+                    f"ldes_fragment_shacl [{url}]",
+                    "No ldes:EventStream found",
+                )
+            )
         return results
 
     # ------------------------------------------------------------------
@@ -474,7 +536,7 @@ def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0,
     # ------------------------------------------------------------------
     needs_traversal = (
         min_members > 0 or min_fragments > 0 or shapes_graph is not None
-        or max_age_youngest_member > 0
+        or max_age_youngest_member > 0 or fragment_shapes_graph is not None
     )
     if needs_traversal:
         # When min_fragments is set, stop traversal as soon as that many
@@ -482,8 +544,9 @@ def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0,
         max_fragments = min_fragments if min_fragments > 0 else None
         with capture_output() as (trav_out, trav_err):
             print(f"Traversing LDES feed from: {url}")
-            merged_graph, traversed_urls, traverse_errors = traverse_ldes_feed(
-                url, graph, timeout=timeout, max_fragments=max_fragments
+            merged_graph, traversed_urls, traverse_errors, fragment_validation = traverse_ldes_feed(
+                url, graph, timeout=timeout, max_fragments=max_fragments,
+                fragment_shapes_graph=fragment_shapes_graph,
             )
             print(
                 f"Traversal complete: {len(traversed_urls)} fragment(s) fetched, "
@@ -500,6 +563,7 @@ def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0,
     else:
         merged_graph = graph
         traversed_urls = {url}
+        fragment_validation = {}
         traversal_stdout = ""
         traversal_stderr = ""
 
@@ -735,6 +799,72 @@ def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0,
             }
         )
 
+    # ------------------------------------------------------------------
+    # Test 8: per-fragment SHACL validation (optional)
+    # ------------------------------------------------------------------
+    if fragment_shapes_graph is not None:
+        start = time.time()
+        with capture_output() as (out, err):
+            print(
+                f"Validating {len(fragment_validation)} traversed fragment(s) "
+                f"against SHACL fragment shapes for: {url}"
+            )
+            non_conforming = []
+            shacl_engine_errors = []
+            for frag_url in sorted(fragment_validation):
+                conforms, results_text = fragment_validation[frag_url]
+                if conforms is None:
+                    shacl_engine_errors.append((frag_url, results_text))
+                    print(
+                        f"  {frag_url}: SHACL validation error",
+                        file=sys.stderr,
+                    )
+                elif not conforms:
+                    non_conforming.append((frag_url, results_text))
+                    print(
+                        f"  {frag_url}: does not conform to fragment shapes",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(f"  {frag_url}: conforms")
+
+        frag_shacl_error = None
+        if shacl_engine_errors:
+            frag_shacl_error = "; ".join(
+                f"{u}: {e}" for u, e in shacl_engine_errors
+            )
+
+        if frag_shacl_error is not None:
+            failure_msg = None
+            failure_txt = None
+        elif non_conforming:
+            failure_msg = (
+                f"{len(non_conforming)} of {len(fragment_validation)} "
+                "fragment(s) do not conform to SHACL shapes"
+            )
+            failure_txt = "\n".join(
+                f"Fragment {u} does not conform:\n{t}" for u, t in non_conforming
+            )
+        else:
+            failure_msg = None
+            failure_txt = None
+
+        frag_shacl_duration = time.time() - start
+        results.append(
+            {
+                "case_name": f"ldes_fragment_shacl [{url}]",
+                "duration": frag_shacl_duration,
+                "error": frag_shacl_error,
+                "failure_message": failure_msg,
+                "failure_text": failure_txt,
+                "properties": {"urls": url},
+                "skipped": False,
+                "skipped_message": "",
+                "stdout": traversal_stdout + out.getvalue(),
+                "stderr": traversal_stderr + err.getvalue(),
+            }
+        )
+
     return results
 
 
@@ -779,6 +909,10 @@ def create_junit_report(suite_name, results, output_file, provenance, suite_prop
     if suite_properties is not None:
         if suite_properties.get("shapes_url"):
             suite.add_property("shapes_url", suite_properties["shapes_url"])
+        if suite_properties.get("fragment_shapes_url"):
+            suite.add_property(
+                "fragment_shapes_url", suite_properties["fragment_shapes_url"]
+            )
         if suite_properties.get("min_members", 0) > 0:
             suite.add_property("min_members", str(suite_properties["min_members"]))
         if suite_properties.get("min_fragments", 0) > 0:
@@ -819,6 +953,21 @@ if __name__ == "__main__":
             f"Fetched shapes graph with {len(shapes_graph)} triple(s)"
         )
 
+    fragment_shapes_graph = None
+    if config["fragment_shapes_url"]:
+        fragment_shapes_graph, frag_shapes_error = fetch_shapes_graph(
+            config["fragment_shapes_url"], timeout=config["timeout"]
+        )
+        if frag_shapes_error:
+            print(
+                f"Error fetching fragment SHACL shapes graph: {frag_shapes_error}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(
+            f"Fetched fragment shapes graph with {len(fragment_shapes_graph)} triple(s)"
+        )
+
     if not config["urls"]:
         results = [skipped_test("ldes_validation", "No URL(s) configured")]
     else:
@@ -832,6 +981,7 @@ if __name__ == "__main__":
                     min_fragments=config["min_fragments"],
                     shapes_graph=shapes_graph,
                     max_age_youngest_member=config["max_age_youngest_member"],
+                    fragment_shapes_graph=fragment_shapes_graph,
                 )
             )
 

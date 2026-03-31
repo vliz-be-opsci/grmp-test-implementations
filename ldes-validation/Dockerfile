@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 RUN mkdir -p /reports
 
 COPY src/ldes_validation.py /app/ldes_validation.py
+COPY shapes/ /app/shapes/
 
 WORKDIR /app
 
