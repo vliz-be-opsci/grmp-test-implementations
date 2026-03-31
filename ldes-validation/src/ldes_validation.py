@@ -13,7 +13,7 @@ import io
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import requests
 from junitparser import Error, Failure, JUnitXml, Skipped, TestCase, TestSuite
@@ -22,6 +22,17 @@ from rdflib import Graph, Namespace, RDF
 
 LDES = Namespace("https://w3id.org/ldes#")
 TREE = Namespace("https://w3id.org/tree#")
+DCT = Namespace("http://purl.org/dc/terms/")
+PROV = Namespace("http://www.w3.org/ns/prov#")
+SCHEMA = Namespace("https://schema.org/")
+
+# Timestamp predicates checked when looking for member ages, in priority order.
+TIMESTAMP_PREDICATES = [
+    DCT.modified,
+    DCT.created,
+    PROV.generatedAtTime,
+    SCHEMA.dateModified,
+]
 
 RDF_ACCEPT = (
     "text/turtle, application/ld+json, application/rdf+xml, "
@@ -84,6 +95,9 @@ def parse_config():
         "timeout": _parse_int_env("TEST_TIMEOUT", 30, minimum=1),
         "min_members": _parse_int_env("TEST_MIN-MEMBERS", 0, minimum=0),
         "min_fragments": _parse_int_env("TEST_MIN-FRAGMENTS", 0, minimum=0),
+        "max_age_youngest_member": _parse_int_env(
+            "TEST_MAX-AGE-YOUNGEST-MEMBER", 0, minimum=0
+        ),
         "shapes_url": os.environ.get("TEST_SHAPES-URL", ""),
         "provenance": os.environ.get("SPECIAL_SOURCE_FILE", "unknown"),
         "create_issue": os.environ.get("SPECIAL_CREATE_ISSUE", "false").lower()
@@ -205,6 +219,43 @@ def traverse_ldes_feed(root_url, root_graph, timeout=30, max_fragments=None):
     return merged, traversed_urls, errors
 
 
+def find_youngest_member_timestamp(graph):
+    """
+    Search the graph for the most recent timestamp on any tree:member resource.
+
+    Examines dcterms:modified, dcterms:created, prov:generatedAtTime, and
+    schema:dateModified predicates on each member linked from an
+    ldes:EventStream via tree:member.  Returns a timezone-aware datetime
+    representing the most recent (youngest) timestamp found, or None if no
+    parseable timestamp is discovered.
+    """
+    all_streams = list(graph.subjects(RDF.type, LDES.EventStream))
+    members = set()
+    for es in all_streams:
+        members.update(graph.objects(es, TREE.member))
+
+    youngest = None
+    for member in members:
+        for predicate in TIMESTAMP_PREDICATES:
+            for obj in graph.objects(member, predicate):
+                try:
+                    value = obj.toPython()
+                    if isinstance(value, datetime):
+                        dt = value
+                    elif isinstance(value, date):
+                        dt = datetime(value.year, value.month, value.day)
+                    else:
+                        continue
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    if youngest is None or dt > youngest:
+                        youngest = dt
+                except Exception:
+                    continue
+
+    return youngest
+
+
 def skipped_test(case_name, reason):
     return {
         "case_name": case_name,
@@ -220,27 +271,34 @@ def skipped_test(case_name, reason):
     }
 
 
-def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0, shapes_graph=None):
+def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0,
+                        shapes_graph=None, max_age_youngest_member=0):
     """
     Validate a URL as an LDES event stream.
 
-    Returns a list of result dicts (3 to 6 depending on configuration):
-    1. ldes_harvest         - can the URL be fetched and parsed as RDF?
-    2. ldes_event_stream    - does the graph declare an ldes:EventStream?
-    3. ldes_tree_view       - does the event stream expose a tree:view?
-    4. ldes_min_members     - does the stream (across all traversed fragments)
-                              expose >= min_members tree:member triples?
-                              (only when min_members > 0)
-    5. ldes_min_fragments   - were at least min_fragments fragment pages
-                              reached by following tree:Relation links?
-                              Traversal stops as soon as min_fragments pages
-                              have been successfully fetched.
-                              (only when min_fragments > 0)
-    6. ldes_member_shacl    - do the members (across all traversed fragments)
-                              conform to the SHACL shapes graph?
-                              (only when shapes_graph is provided)
+    Returns a list of result dicts (3 to 7 depending on configuration):
+    1. ldes_harvest                  - can the URL be fetched and parsed as RDF?
+    2. ldes_event_stream             - does the graph declare an ldes:EventStream?
+    3. ldes_tree_view                - does the event stream expose a tree:view?
+    4. ldes_min_members              - does the stream (across all traversed
+                                       fragments) expose >= min_members
+                                       tree:member triples?
+                                       (only when min_members > 0)
+    5. ldes_min_fragments            - were at least min_fragments fragment pages
+                                       reached by following tree:Relation links?
+                                       Traversal stops as soon as min_fragments
+                                       pages have been successfully fetched.
+                                       (only when min_fragments > 0)
+    6. ldes_member_shacl             - do the members (across all traversed
+                                       fragments) conform to the SHACL shapes
+                                       graph?
+                                       (only when shapes_graph is provided)
+    7. ldes_max_age_youngest_member  - is the youngest (most recently timestamped)
+                                       tree:member at most max_age_youngest_member
+                                       hours old?
+                                       (only when max_age_youngest_member > 0)
 
-    Optional checks (4-6) traverse the LDES feed via tree:node links before
+    Optional checks (4-7) traverse the LDES feed via tree:node links before
     evaluating.  When min_fragments is set, traversal stops early once that
     many fragments have been reached; otherwise the full feed is traversed.
     """
@@ -293,6 +351,12 @@ def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0, shapes_
         if shapes_graph is not None:
             results.append(
                 skipped_test(f"ldes_member_shacl [{url}]", "RDF harvest failed")
+            )
+        if max_age_youngest_member > 0:
+            results.append(
+                skipped_test(
+                    f"ldes_max_age_youngest_member [{url}]", "RDF harvest failed"
+                )
             )
         return results
 
@@ -354,6 +418,13 @@ def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0, shapes_
                     f"ldes_member_shacl [{url}]", "No ldes:EventStream found"
                 )
             )
+        if max_age_youngest_member > 0:
+            results.append(
+                skipped_test(
+                    f"ldes_max_age_youngest_member [{url}]",
+                    "No ldes:EventStream found",
+                )
+            )
         return results
 
     # ------------------------------------------------------------------
@@ -403,6 +474,7 @@ def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0, shapes_
     # ------------------------------------------------------------------
     needs_traversal = (
         min_members > 0 or min_fragments > 0 or shapes_graph is not None
+        or max_age_youngest_member > 0
     )
     if needs_traversal:
         # When min_fragments is set, stop traversal as soon as that many
@@ -583,6 +655,86 @@ def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0, shapes_
             }
         )
 
+    # ------------------------------------------------------------------
+    # Test 7: maximum age of youngest tree:member (optional)
+    # ------------------------------------------------------------------
+    if max_age_youngest_member > 0:
+        start = time.time()
+        age_error = None
+        youngest_ts = None
+        youngest_age_hours = None
+        with capture_output() as (out, err):
+            print(
+                f"Checking age of youngest tree:member across "
+                f"{len(traversed_urls)} traversed fragment(s) of: {url}"
+            )
+            try:
+                youngest_ts = find_youngest_member_timestamp(merged_graph)
+                if youngest_ts is None:
+                    print(
+                        "No timestamp found on any tree:member "
+                        f"(checked {len(TIMESTAMP_PREDICATES)} predicate(s))",
+                        file=sys.stderr,
+                    )
+                else:
+                    now = datetime.now(timezone.utc)
+                    youngest_age_hours = (now - youngest_ts).total_seconds() / 3600
+                    print(
+                        f"Youngest member timestamp: {youngest_ts.isoformat()}; "
+                        f"age: {youngest_age_hours:.2f} hour(s); "
+                        f"maximum allowed: {max_age_youngest_member} hour(s)"
+                    )
+                    if youngest_age_hours > max_age_youngest_member:
+                        print(
+                            f"Youngest member is too old: "
+                            f"{youngest_age_hours:.2f}h > {max_age_youngest_member}h",
+                            file=sys.stderr,
+                        )
+            except Exception as e:
+                print(f"Error checking youngest member age: {e}", file=sys.stderr)
+                age_error = str(e)
+
+        if age_error is not None:
+            failure_msg = None
+            failure_txt = None
+        elif youngest_ts is None:
+            failure_msg = "No timestamp found on any tree:member"
+            failure_txt = (
+                f"The LDES feed at {url} contains no members with a recognisable "
+                "timestamp (checked dcterms:modified, dcterms:created, "
+                "prov:generatedAtTime, schema:dateModified)"
+            )
+        elif youngest_age_hours > max_age_youngest_member:
+            failure_msg = (
+                f"Youngest member is {youngest_age_hours:.2f}h old, "
+                f"exceeds maximum {max_age_youngest_member}h"
+            )
+            failure_txt = (
+                f"The youngest member of the LDES feed at {url} has timestamp "
+                f"{youngest_ts.isoformat()}, which is {youngest_age_hours:.2f} "
+                f"hour(s) old. The maximum allowed age is "
+                f"{max_age_youngest_member} hour(s)."
+            )
+        else:
+            failure_msg = None
+            failure_txt = None
+
+        max_age_duration = time.time() - start
+        results.append(
+            {
+                "case_name": f"ldes_max_age_youngest_member [{url}]",
+                "duration": max_age_duration,
+                "error": age_error,
+                "failure_message": failure_msg,
+                "failure_text": failure_txt,
+                "properties": {"urls": url},
+                "skipped": False,
+                "skipped_message": "",
+                "stdout": traversal_stdout + out.getvalue(),
+                "stderr": traversal_stderr + err.getvalue(),
+            }
+        )
+
     return results
 
 
@@ -633,6 +785,11 @@ def create_junit_report(suite_name, results, output_file, provenance, suite_prop
             suite.add_property(
                 "min_fragments", str(suite_properties["min_fragments"])
             )
+        if suite_properties.get("max_age_youngest_member", 0) > 0:
+            suite.add_property(
+                "max_age_youngest_member",
+                str(suite_properties["max_age_youngest_member"]),
+            )
         suite.add_property(
             "create-issue",
             str(suite_properties.get("create_issue", False)).lower(),
@@ -674,6 +831,7 @@ if __name__ == "__main__":
                     min_members=config["min_members"],
                     min_fragments=config["min_fragments"],
                     shapes_graph=shapes_graph,
+                    max_age_youngest_member=config["max_age_youngest_member"],
                 )
             )
 

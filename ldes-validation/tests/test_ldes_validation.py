@@ -10,10 +10,11 @@ Run with (from ldes-validation/ root):
 import os
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
-from rdflib import Graph, Namespace, RDF, URIRef
+from rdflib import Graph, Literal, Namespace, RDF, URIRef, XSD
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -22,6 +23,7 @@ from ldes_validation import (
     create_junit_report,
     fetch_rdf_graph,
     fetch_shapes_graph,
+    find_youngest_member_timestamp,
     parse_config,
     run_ldes_validation,
     skipped_test,
@@ -30,6 +32,8 @@ from ldes_validation import (
 
 LDES = Namespace("https://w3id.org/ldes#")
 TREE = Namespace("https://w3id.org/tree#")
+DCT = Namespace("http://purl.org/dc/terms/")
+PROV = Namespace("http://www.w3.org/ns/prov#")
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +148,7 @@ class TestParseConfig:
         monkeypatch.delenv("TEST_TIMEOUT", raising=False)
         monkeypatch.delenv("TEST_MIN-MEMBERS", raising=False)
         monkeypatch.delenv("TEST_MIN-FRAGMENTS", raising=False)
+        monkeypatch.delenv("TEST_MAX-AGE-YOUNGEST-MEMBER", raising=False)
         monkeypatch.delenv("TEST_SHAPES-URL", raising=False)
         monkeypatch.delenv("SPECIAL_SOURCE_FILE", raising=False)
         monkeypatch.delenv("SPECIAL_CREATE_ISSUE", raising=False)
@@ -152,6 +157,7 @@ class TestParseConfig:
         assert config["timeout"] == 30
         assert config["min_members"] == 0
         assert config["min_fragments"] == 0
+        assert config["max_age_youngest_member"] == 0
         assert config["shapes_url"] == ""
         assert config["provenance"] == "unknown"
         assert config["create_issue"] is False
