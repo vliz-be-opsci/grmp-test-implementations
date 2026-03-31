@@ -74,7 +74,7 @@ def plain_rdf_graph():
 
 
 def ldes_graph_with_members_and_fragments():
-    """LDES graph with EventStream, tree:view, members, and a child fragment."""
+    """LDES graph with EventStream, tree:view, tree:members, and a child fragment."""
     stream = URIRef("https://example.org/stream")
     view = URIRef("https://example.org/stream/view")
     child = URIRef("https://example.org/stream/page2")
@@ -83,8 +83,8 @@ def ldes_graph_with_members_and_fragments():
     g = Graph()
     g.add((stream, RDF.type, LDES.EventStream))
     g.add((stream, TREE.view, view))
-    g.add((stream, LDES.member, member1))
-    g.add((stream, LDES.member, member2))
+    g.add((stream, TREE.member, member1))
+    g.add((stream, TREE.member, member2))
     g.add((view, TREE.node, child))
     return g
 
@@ -434,8 +434,8 @@ class TestRunLdesValidation:
         merged = Graph()
         for t in root_graph:
             merged.add(t)
-        merged.add((stream, LDES.member, member_a))
-        merged.add((stream, LDES.member, member_b))
+        merged.add((stream, TREE.member, member_a))
+        merged.add((stream, TREE.member, member_b))
         traversed = {self.URL, "https://example.org/stream/view",
                      "https://example.org/stream/page2"}
         with patch("ldes_validation.fetch_rdf_graph", return_value=(root_graph, None)), \
@@ -571,7 +571,7 @@ class TestRunLdesValidation:
         merged = Graph()
         for t in root_graph:
             merged.add(t)
-        merged.add((stream, LDES.member, member))
+        merged.add((stream, TREE.member, member))
         traversed = {self.URL, "https://example.org/stream/view"}
         shapes_graph = make_graph([(URIRef("urn:s"), URIRef("urn:p"), URIRef("urn:o"))])
 
@@ -587,7 +587,7 @@ class TestRunLdesValidation:
              patch("ldes_validation.shacl_validate", side_effect=fake_shacl):
             run_ldes_validation(self.URL, shapes_graph=shapes_graph)
 
-        assert (stream, LDES.member, member) in captured_data_graph["g"]
+        assert (stream, TREE.member, member) in captured_data_graph["g"]
 
 
 # ---------------------------------------------------------------------------
@@ -691,7 +691,7 @@ class TestTraverseLdesFeed:
         assert "connection refused" in errors[0][1]
 
     def test_members_from_child_pages_merged(self):
-        """ldes:member triples in child pages appear in merged_graph."""
+        """tree:member triples in child pages appear in merged_graph."""
         root_graph = ldes_graph_with_view()
         stream = URIRef(self.ROOT_URL)
         member_a = URIRef("https://example.org/member/a")
@@ -701,8 +701,8 @@ class TestTraverseLdesFeed:
             [(URIRef(self.VIEW_URL), TREE.node, URIRef(self.CHILD_URL))]
         )
         child_graph = make_graph([
-            (stream, LDES.member, member_a),
-            (stream, LDES.member, member_b),
+            (stream, TREE.member, member_a),
+            (stream, TREE.member, member_b),
         ])
 
         def fetch_side_effect(url, timeout=30):
@@ -716,7 +716,7 @@ class TestTraverseLdesFeed:
             merged, traversed, errors = traverse_ldes_feed(self.ROOT_URL, root_graph)
 
         assert errors == []
-        members = list(merged.objects(stream, LDES.member))
+        members = list(merged.objects(stream, TREE.member))
         assert member_a in members
         assert member_b in members
 
@@ -734,8 +734,101 @@ class TestTraverseLdesFeed:
         for triple in root_graph:
             assert triple in merged
 
+    def test_max_fragments_stops_traversal_early(self):
+        """Traversal stops once max_fragments pages have been fetched."""
+        root_graph = ldes_graph_with_view()  # tree:view → VIEW_URL
+        view_graph = make_graph(
+            [(URIRef(self.VIEW_URL), TREE.node, URIRef(self.CHILD_URL))]
+        )
+        child_graph = make_graph(
+            [(URIRef(self.CHILD_URL), RDF.type, TREE.Node)]
+        )
+        fetch_count = [0]
+
+        def fetch_side_effect(url, timeout=30):
+            fetch_count[0] += 1
+            if url == self.VIEW_URL:
+                return view_graph, None
+            if url == self.CHILD_URL:
+                return child_graph, None
+            return None, f"unexpected URL: {url}"
+
+        # max_fragments=2 means root + VIEW_URL (2 total); CHILD_URL should not be fetched
+        with patch("ldes_validation.fetch_rdf_graph", side_effect=fetch_side_effect):
+            merged, traversed, errors = traverse_ldes_feed(
+                self.ROOT_URL, root_graph, max_fragments=2
+            )
+
+        # Should have stopped after root + VIEW_URL (2 fragments)
+        assert len(traversed) == 2
+        assert self.ROOT_URL in traversed
+        assert self.VIEW_URL in traversed
+        assert self.CHILD_URL not in traversed
+        # fetch_count is 1 because only VIEW_URL was fetched (root_graph is passed as parameter)
+        assert fetch_count[0] == 1
+
+    def test_max_fragments_none_traverses_all(self):
+        """max_fragments=None means the entire feed is traversed."""
+        root_graph = ldes_graph_with_view()  # tree:view → VIEW_URL
+        view_graph = make_graph(
+            [(URIRef(self.VIEW_URL), TREE.node, URIRef(self.CHILD_URL))]
+        )
+        child_graph = make_graph(
+            [(URIRef(self.CHILD_URL), RDF.type, TREE.Node)]
+        )
+
+        def fetch_side_effect(url, timeout=30):
+            if url == self.VIEW_URL:
+                return view_graph, None
+            if url == self.CHILD_URL:
+                return child_graph, None
+            return None, f"unexpected URL: {url}"
+
+        with patch("ldes_validation.fetch_rdf_graph", side_effect=fetch_side_effect):
+            merged, traversed, errors = traverse_ldes_feed(
+                self.ROOT_URL, root_graph, max_fragments=None
+            )
+
+        assert traversed == {self.ROOT_URL, self.VIEW_URL, self.CHILD_URL}
+        assert errors == []
 
 
+class TestRunLdesValidationUsesMaxFragments:
+    """Verify that run_ldes_validation passes min_fragments as max_fragments."""
+
+    URL = "https://example.org/stream"
+
+    def test_traverse_called_with_max_fragments_when_min_fragments_set(self):
+        """When min_fragments > 0, traverse_ldes_feed is called with max_fragments=min_fragments."""
+        graph = ldes_graph_with_view()
+        traversed = {self.URL}
+        captured_kwargs = {}
+
+        def fake_traverse(root_url, root_graph, timeout=30, max_fragments=None):
+            captured_kwargs["max_fragments"] = max_fragments
+            return root_graph, traversed, []
+
+        with patch("ldes_validation.fetch_rdf_graph", return_value=(graph, None)), \
+             patch("ldes_validation.traverse_ldes_feed", side_effect=fake_traverse):
+            run_ldes_validation(self.URL, min_fragments=3)
+
+        assert captured_kwargs["max_fragments"] == 3
+
+    def test_traverse_called_with_no_max_when_only_min_members_set(self):
+        """When only min_members > 0 (no min_fragments), max_fragments is None."""
+        graph = ldes_graph_with_view()
+        traversed = {self.URL}
+        captured_kwargs = {}
+
+        def fake_traverse(root_url, root_graph, timeout=30, max_fragments=None):
+            captured_kwargs["max_fragments"] = max_fragments
+            return root_graph, traversed, []
+
+        with patch("ldes_validation.fetch_rdf_graph", return_value=(graph, None)), \
+             patch("ldes_validation.traverse_ldes_feed", side_effect=fake_traverse):
+            run_ldes_validation(self.URL, min_members=5)
+
+        assert captured_kwargs["max_fragments"] is None
 
 
 class TestSkippedTest:

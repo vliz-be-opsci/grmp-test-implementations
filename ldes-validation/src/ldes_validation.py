@@ -137,12 +137,20 @@ def fetch_shapes_graph(url, timeout=30):
     return fetch_rdf_graph(url, timeout=timeout)
 
 
-def traverse_ldes_feed(root_url, root_graph, timeout=30):
+def traverse_ldes_feed(root_url, root_graph, timeout=30, max_fragments=None):
     """
     Traverse an LDES feed by following tree:node links discovered via
     tree:Relation nodes.  Starting from the tree:view targets declared in
     root_graph, each linked fragment page is fetched and its own tree:node
     links are followed recursively.  A visited-set prevents infinite loops.
+
+    Args:
+        root_url      – URL of the root page (already fetched into root_graph)
+        root_graph    – pre-fetched rdflib.Graph of the root page
+        timeout       – HTTP request timeout in seconds
+        max_fragments – if given, traversal stops once this many fragment pages
+                        have been successfully fetched (root counts as one).
+                        None means traverse the entire feed.
 
     Returns:
         merged_graph   – rdflib.Graph merging all successfully visited pages
@@ -165,6 +173,10 @@ def traverse_ldes_feed(root_url, root_graph, timeout=30):
 
     errors = []
     while queue:
+        # Stop early once the required number of fragments has been reached
+        if max_fragments is not None and len(traversed_urls) >= max_fragments:
+            break
+
         fragment_url = queue.pop(0)
         if fragment_url in visited:
             continue
@@ -217,17 +229,20 @@ def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0, shapes_
     2. ldes_event_stream    - does the graph declare an ldes:EventStream?
     3. ldes_tree_view       - does the event stream expose a tree:view?
     4. ldes_min_members     - does the stream (across all traversed fragments)
-                              expose >= min_members ldes:member triples?
+                              expose >= min_members tree:member triples?
                               (only when min_members > 0)
     5. ldes_min_fragments   - were at least min_fragments fragment pages
                               reached by following tree:Relation links?
+                              Traversal stops as soon as min_fragments pages
+                              have been successfully fetched.
                               (only when min_fragments > 0)
     6. ldes_member_shacl    - do the members (across all traversed fragments)
                               conform to the SHACL shapes graph?
                               (only when shapes_graph is provided)
 
-    Optional checks (4-6) traverse the full LDES feed via tree:node links
-    before evaluating.
+    Optional checks (4-6) traverse the LDES feed via tree:node links before
+    evaluating.  When min_fragments is set, traversal stops early once that
+    many fragments have been reached; otherwise the full feed is traversed.
     """
     results = []
 
@@ -390,10 +405,13 @@ def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0, shapes_
         min_members > 0 or min_fragments > 0 or shapes_graph is not None
     )
     if needs_traversal:
+        # When min_fragments is set, stop traversal as soon as that many
+        # fragments have been fetched (no need to traverse the whole feed).
+        max_fragments = min_fragments if min_fragments > 0 else None
         with capture_output() as (trav_out, trav_err):
             print(f"Traversing LDES feed from: {url}")
             merged_graph, traversed_urls, traverse_errors = traverse_ldes_feed(
-                url, graph, timeout=timeout
+                url, graph, timeout=timeout, max_fragments=max_fragments
             )
             print(
                 f"Traversal complete: {len(traversed_urls)} fragment(s) fetched, "
@@ -424,10 +442,10 @@ def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0, shapes_
             all_streams = list(merged_graph.subjects(RDF.type, LDES.EventStream))
             members = set()
             for es in all_streams:
-                members.update(merged_graph.objects(es, LDES.member))
+                members.update(merged_graph.objects(es, TREE.member))
             member_count = len(members)
             print(
-                f"Found {member_count} ldes:member(s) across "
+                f"Found {member_count} tree:member(s) across "
                 f"{len(traversed_urls)} traversed fragment(s); "
                 f"required minimum: {min_members}"
             )
@@ -451,7 +469,7 @@ def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0, shapes_
                 ),
                 "failure_text": (
                     f"The event stream at {url} exposes only {member_count} "
-                    f"ldes:member triple(s) across {len(traversed_urls)} "
+                    f"tree:member triple(s) across {len(traversed_urls)} "
                     f"traversed fragment(s), but at least {min_members} "
                     "are required"
                     if member_count < min_members
