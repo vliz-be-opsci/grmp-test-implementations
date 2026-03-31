@@ -56,3 +56,13 @@ Checks whether RDF graphs harvested from one or more data URLs conform to a give
 3) reports conformance (pass) or non-conformance with the validation report text (fail)
 
 The shapes graph is harvested once from the configured `TEST_SHAPES_URL`. It then creates a JUnit XML file containing the results and adds the shapes URL and all tested data URLs as testsuite properties.
+
+### 7 LDES Validation
+
+Checks whether one or more URLs expose a valid Linked Data Event Stream (LDES). For each URL it tests:
+
+1) whether the URL can be fetched and parsed as an RDF graph
+2) whether the graph contains at least one `ldes:EventStream` declaration (`rdf:type ldes:EventStream`)
+3) whether each declared event stream has at least one `tree:view` relation
+
+If the RDF harvest fails the subsequent checks are reported as skipped. Similarly, if no `ldes:EventStream` is found the `tree:view` check is skipped. It then creates a JUnit XML file containing the results and adds the tested URLs as testsuite properties.

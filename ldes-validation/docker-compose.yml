@@ -1,0 +1,19 @@
+services:
+  ldesvalidation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ldesvalidation
+    volumes:
+      - ./reports:/reports:rw
+    environment:
+      - TS_NAME=localtestrun
+      - TEST_URLS=['https://kgfixed.github.io/vocab.nerc.ac.uk/P02/latest.ttl']
+      - TEST_TIMEOUT=30
+    working_dir: /app
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge
