@@ -1,0 +1,56 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites><testsuite name="localtestrun" timestamp="2026-03-31T07:40:01.320682+00:00" tests="6" errors="0" failures="1" skipped="0" time="0.07678365707397461"><testcase name="ldes_harvest [https://marineregions.org/feed.ttl]" classname="localtestrun" time="0.07624244689941406"><system-out>Fetching RDF graph from: https://marineregions.org/feed.ttl
+HTTP 200, Content-Type: 'text/turtle; charset=UTF-8;', format: turtle
+Successfully parsed 120 triple(s)
+</system-out></testcase><testcase name="ldes_event_stream [https://marineregions.org/feed.ttl]" classname="localtestrun" time="9.34600830078125e-05"><system-out>Found 1 ldes:EventStream declaration(s)
+  EventStream: https://www.marineregions.org/feed
+</system-out></testcase><testcase name="ldes_tree_view [https://marineregions.org/feed.ttl]" classname="localtestrun" time="1.9073486328125e-05"><system-out>Found 1 tree:view relation(s)
+  tree:view: https://www.marineregions.org/feed.ttl?page=2026-03-07T20%3A00%3A00Z%2F2026-03-07T21%3A00%3A00Z
+</system-out></testcase><testcase name="ldes_min_members [https://marineregions.org/feed.ttl]" classname="localtestrun" time="7.510185241699219e-05"><system-out>Traversing LDES feed from: https://marineregions.org/feed.ttl
+Fetching LDES fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T20%3A00%3A00Z%2F2026-03-07T21%3A00%3A00Z
+HTTP 200, Content-Type: 'text/turtle; charset=UTF-8;', format: turtle
+Fetching LDES fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T19%3A00%3A00Z%2F2026-03-07T20%3A00%3A00Z
+HTTP 200, Content-Type: 'text/turtle; charset=UTF-8;', format: turtle
+Fetching LDES fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T18%3A00%3A00Z%2F2026-03-07T19%3A00%3A00Z
+HTTP 200, Content-Type: 'text/turtle; charset=UTF-8;', format: turtle
+Fetching LDES fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T16%3A00%3A00Z%2F2026-03-07T17%3A00%3A00Z
+HTTP 200, Content-Type: 'text/turtle; charset=UTF-8;', format: turtle
+Fetching LDES fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T15%3A00%3A00Z%2F2026-03-07T16%3A00%3A00Z
+HTTP 200, Content-Type: 'text/turtle; charset=UTF-8;', format: turtle
+Traversal complete: 6 fragment(s) fetched, 884 total triple(s)
+Found 23 tree:member(s) across 6 traversed fragment(s); required minimum: 20
+</system-out></testcase><testcase name="ldes_min_fragments [https://marineregions.org/feed.ttl]" classname="localtestrun" time="2.09808349609375e-05"><system-out>Traversing LDES feed from: https://marineregions.org/feed.ttl
+Fetching LDES fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T20%3A00%3A00Z%2F2026-03-07T21%3A00%3A00Z
+HTTP 200, Content-Type: 'text/turtle; charset=UTF-8;', format: turtle
+Fetching LDES fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T19%3A00%3A00Z%2F2026-03-07T20%3A00%3A00Z
+HTTP 200, Content-Type: 'text/turtle; charset=UTF-8;', format: turtle
+Fetching LDES fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T18%3A00%3A00Z%2F2026-03-07T19%3A00%3A00Z
+HTTP 200, Content-Type: 'text/turtle; charset=UTF-8;', format: turtle
+Fetching LDES fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T16%3A00%3A00Z%2F2026-03-07T17%3A00%3A00Z
+HTTP 200, Content-Type: 'text/turtle; charset=UTF-8;', format: turtle
+Fetching LDES fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T15%3A00%3A00Z%2F2026-03-07T16%3A00%3A00Z
+HTTP 200, Content-Type: 'text/turtle; charset=UTF-8;', format: turtle
+Traversal complete: 6 fragment(s) fetched, 884 total triple(s)
+Traversed 6 LDES fragment(s) (following tree:Relation → tree:node links); required minimum: 6
+  fragment: https://marineregions.org/feed.ttl
+  fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T15%3A00%3A00Z%2F2026-03-07T16%3A00%3A00Z
+  fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T16%3A00%3A00Z%2F2026-03-07T17%3A00%3A00Z
+  fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T18%3A00%3A00Z%2F2026-03-07T19%3A00%3A00Z
+  fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T19%3A00%3A00Z%2F2026-03-07T20%3A00%3A00Z
+  fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T20%3A00%3A00Z%2F2026-03-07T21%3A00%3A00Z
+</system-out></testcase><testcase name="ldes_max_age_youngest_member [https://marineregions.org/feed.ttl]" classname="localtestrun" time="0.0003325939178466797"><failure message="Youngest member is 563.36h old, exceeds maximum 24h">The youngest member of the LDES feed at https://marineregions.org/feed.ttl has timestamp 2026-03-07T20:18:09+00:00, which is 563.36 hour(s) old. The maximum allowed age is 24 hour(s).</failure><system-out>Traversing LDES feed from: https://marineregions.org/feed.ttl
+Fetching LDES fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T20%3A00%3A00Z%2F2026-03-07T21%3A00%3A00Z
+HTTP 200, Content-Type: 'text/turtle; charset=UTF-8;', format: turtle
+Fetching LDES fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T19%3A00%3A00Z%2F2026-03-07T20%3A00%3A00Z
+HTTP 200, Content-Type: 'text/turtle; charset=UTF-8;', format: turtle
+Fetching LDES fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T18%3A00%3A00Z%2F2026-03-07T19%3A00%3A00Z
+HTTP 200, Content-Type: 'text/turtle; charset=UTF-8;', format: turtle
+Fetching LDES fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T16%3A00%3A00Z%2F2026-03-07T17%3A00%3A00Z
+HTTP 200, Content-Type: 'text/turtle; charset=UTF-8;', format: turtle
+Fetching LDES fragment: https://www.marineregions.org/feed.ttl?page=2026-03-07T15%3A00%3A00Z%2F2026-03-07T16%3A00%3A00Z
+HTTP 200, Content-Type: 'text/turtle; charset=UTF-8;', format: turtle
+Traversal complete: 6 fragment(s) fetched, 884 total triple(s)
+Checking age of youngest tree:member across 6 traversed fragment(s) of: https://marineregions.org/feed.ttl
+Youngest member timestamp: 2026-03-07T20:18:09+00:00; age: 563.36 hour(s); maximum allowed: 24 hour(s)
+</system-out><system-err>Youngest member is too old: 563.36h &gt; 24h
+</system-err></testcase><properties><property name="urls" value="https://marineregions.org/feed.ttl" /><property name="provenance" value="unknown" /><property name="min_members" value="20" /><property name="min_fragments" value="6" /><property name="max_age_youngest_member" value="24" /><property name="create-issue" value="false" /></properties></testsuite></testsuites>
