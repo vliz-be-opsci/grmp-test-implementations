@@ -21,6 +21,7 @@ from ldes_validation import (
     _detect_rdf_format,
     create_junit_report,
     fetch_rdf_graph,
+    fetch_shapes_graph,
     parse_config,
     run_ldes_validation,
     skipped_test,
@@ -68,6 +69,22 @@ def plain_rdf_graph():
     o = URIRef("https://example.org/object")
     g = Graph()
     g.add((s, p, o))
+    return g
+
+
+def ldes_graph_with_members_and_fragments():
+    """LDES graph with EventStream, tree:view, members, and a child fragment."""
+    stream = URIRef("https://example.org/stream")
+    view = URIRef("https://example.org/stream/view")
+    child = URIRef("https://example.org/stream/page2")
+    member1 = URIRef("https://example.org/member/1")
+    member2 = URIRef("https://example.org/member/2")
+    g = Graph()
+    g.add((stream, RDF.type, LDES.EventStream))
+    g.add((stream, TREE.view, view))
+    g.add((stream, LDES.member, member1))
+    g.add((stream, LDES.member, member2))
+    g.add((view, TREE.node, child))
     return g
 
 
@@ -124,11 +141,17 @@ class TestParseConfig:
     def test_defaults(self, monkeypatch):
         monkeypatch.delenv("TEST_URLS", raising=False)
         monkeypatch.delenv("TEST_TIMEOUT", raising=False)
+        monkeypatch.delenv("TEST_MIN-MEMBERS", raising=False)
+        monkeypatch.delenv("TEST_MIN-FRAGMENTS", raising=False)
+        monkeypatch.delenv("TEST_SHAPES-URL", raising=False)
         monkeypatch.delenv("SPECIAL_SOURCE_FILE", raising=False)
         monkeypatch.delenv("SPECIAL_CREATE_ISSUE", raising=False)
         config = parse_config()
         assert config["urls"] == []
         assert config["timeout"] == 30
+        assert config["min_members"] == 0
+        assert config["min_fragments"] == 0
+        assert config["shapes_url"] == ""
         assert config["provenance"] == "unknown"
         assert config["create_issue"] is False
 
@@ -168,6 +191,31 @@ class TestParseConfig:
         config = parse_config()
         assert config["timeout"] == 30
 
+    def test_min_members_override(self, monkeypatch):
+        monkeypatch.setenv("TEST_MIN-MEMBERS", "5")
+        config = parse_config()
+        assert config["min_members"] == 5
+
+    def test_min_members_invalid_falls_back(self, monkeypatch):
+        monkeypatch.setenv("TEST_MIN-MEMBERS", "abc")
+        config = parse_config()
+        assert config["min_members"] == 0
+
+    def test_min_fragments_override(self, monkeypatch):
+        monkeypatch.setenv("TEST_MIN-FRAGMENTS", "3")
+        config = parse_config()
+        assert config["min_fragments"] == 3
+
+    def test_min_fragments_invalid_falls_back(self, monkeypatch):
+        monkeypatch.setenv("TEST_MIN-FRAGMENTS", "abc")
+        config = parse_config()
+        assert config["min_fragments"] == 0
+
+    def test_shapes_url(self, monkeypatch):
+        monkeypatch.setenv("TEST_SHAPES-URL", "https://example.org/shapes.ttl")
+        config = parse_config()
+        assert config["shapes_url"] == "https://example.org/shapes.ttl"
+
     def test_provenance(self, monkeypatch):
         monkeypatch.setenv("SPECIAL_SOURCE_FILE", "my_source.yaml")
         config = parse_config()
@@ -185,7 +233,7 @@ class TestParseConfig:
 
 
 # ---------------------------------------------------------------------------
-# fetch_rdf_graph
+# fetch_rdf_graph / fetch_shapes_graph
 # ---------------------------------------------------------------------------
 
 
@@ -236,6 +284,16 @@ class TestFetchRdfGraph:
         assert error is not None
 
 
+class TestFetchShapesGraph:
+    def test_delegates_to_fetch_rdf_graph(self):
+        shapes_graph = make_graph([(URIRef("urn:s"), URIRef("urn:p"), URIRef("urn:o"))])
+        with patch("ldes_validation.fetch_rdf_graph", return_value=(shapes_graph, None)) as mock_fetch:
+            g, error = fetch_shapes_graph("https://example.org/shapes.ttl", timeout=15)
+        mock_fetch.assert_called_once_with("https://example.org/shapes.ttl", timeout=15)
+        assert error is None
+        assert g is shapes_graph
+
+
 # ---------------------------------------------------------------------------
 # run_ldes_validation
 # ---------------------------------------------------------------------------
@@ -268,6 +326,17 @@ class TestRunLdesValidation:
         assert event_stream["skipped"] is True
         assert tree_view["skipped"] is True
 
+    def test_harvest_failure_skips_optional_tests(self):
+        shapes = make_graph([(URIRef("urn:s"), URIRef("urn:p"), URIRef("urn:o"))])
+        with patch(
+            "ldes_validation.fetch_rdf_graph", return_value=(None, "network timeout")
+        ):
+            results = run_ldes_validation(
+                self.URL, min_members=1, min_fragments=1, shapes_graph=shapes
+            )
+        assert len(results) == 6
+        assert all(r["skipped"] for r in results[1:])
+
     def test_no_event_stream_skips_tree_view(self):
         graph = plain_rdf_graph()
         with patch("ldes_validation.fetch_rdf_graph", return_value=(graph, None)):
@@ -278,6 +347,19 @@ class TestRunLdesValidation:
         assert event_stream["failure_message"] == "No ldes:EventStream declaration found"
         assert tree_view["skipped"] is True
         assert "No ldes:EventStream found" in tree_view["skipped_message"]
+
+    def test_no_event_stream_skips_optional_tests(self):
+        graph = plain_rdf_graph()
+        shapes = make_graph([(URIRef("urn:s"), URIRef("urn:p"), URIRef("urn:o"))])
+        with patch("ldes_validation.fetch_rdf_graph", return_value=(graph, None)):
+            results = run_ldes_validation(
+                self.URL, min_members=1, min_fragments=1, shapes_graph=shapes
+            )
+        assert len(results) == 6
+        assert results[2]["skipped"] is True  # ldes_tree_view
+        assert results[3]["skipped"] is True  # ldes_min_members
+        assert results[4]["skipped"] is True  # ldes_min_fragments
+        assert results[5]["skipped"] is True  # ldes_member_shacl
 
     def test_event_stream_no_tree_view(self):
         graph = ldes_graph_no_view()
@@ -303,6 +385,114 @@ class TestRunLdesValidation:
         for result in results:
             if not result["skipped"]:
                 assert result["properties"].get("urls") == self.URL
+
+    # ------------------------------------------------------------------
+    # min_members tests
+    # ------------------------------------------------------------------
+
+    def test_min_members_not_checked_when_zero(self):
+        graph = ldes_graph_with_view()
+        with patch("ldes_validation.fetch_rdf_graph", return_value=(graph, None)):
+            results = run_ldes_validation(self.URL, min_members=0)
+        # Only 3 base results, no min_members case
+        assert len(results) == 3
+        assert not any("ldes_min_members" in r["case_name"] for r in results)
+
+    def test_min_members_passes_when_sufficient(self):
+        graph = ldes_graph_with_members_and_fragments()
+        with patch("ldes_validation.fetch_rdf_graph", return_value=(graph, None)):
+            results = run_ldes_validation(self.URL, min_members=2)
+        min_members_result = next(
+            r for r in results if "ldes_min_members" in r["case_name"]
+        )
+        assert min_members_result["failure_message"] is None
+        assert min_members_result["error"] is None
+
+    def test_min_members_fails_when_insufficient(self):
+        graph = ldes_graph_with_view()  # no members
+        with patch("ldes_validation.fetch_rdf_graph", return_value=(graph, None)):
+            results = run_ldes_validation(self.URL, min_members=1)
+        min_members_result = next(
+            r for r in results if "ldes_min_members" in r["case_name"]
+        )
+        assert min_members_result["failure_message"] is not None
+        assert "0" in min_members_result["failure_message"]
+
+    # ------------------------------------------------------------------
+    # min_fragments tests
+    # ------------------------------------------------------------------
+
+    def test_min_fragments_not_checked_when_zero(self):
+        graph = ldes_graph_with_view()
+        with patch("ldes_validation.fetch_rdf_graph", return_value=(graph, None)):
+            results = run_ldes_validation(self.URL, min_fragments=0)
+        assert not any("ldes_min_fragments" in r["case_name"] for r in results)
+
+    def test_min_fragments_passes_when_sufficient(self):
+        graph = ldes_graph_with_members_and_fragments()
+        # has 1 tree:view node + 1 tree:node child = 2 distinct fragments
+        with patch("ldes_validation.fetch_rdf_graph", return_value=(graph, None)):
+            results = run_ldes_validation(self.URL, min_fragments=2)
+        min_fragments_result = next(
+            r for r in results if "ldes_min_fragments" in r["case_name"]
+        )
+        assert min_fragments_result["failure_message"] is None
+
+    def test_min_fragments_fails_when_insufficient(self):
+        graph = ldes_graph_with_view()  # only 1 fragment (root view node)
+        with patch("ldes_validation.fetch_rdf_graph", return_value=(graph, None)):
+            results = run_ldes_validation(self.URL, min_fragments=5)
+        min_fragments_result = next(
+            r for r in results if "ldes_min_fragments" in r["case_name"]
+        )
+        assert min_fragments_result["failure_message"] is not None
+
+    # ------------------------------------------------------------------
+    # SHACL member validation tests
+    # ------------------------------------------------------------------
+
+    def test_member_shacl_not_checked_when_no_shapes_graph(self):
+        graph = ldes_graph_with_view()
+        with patch("ldes_validation.fetch_rdf_graph", return_value=(graph, None)):
+            results = run_ldes_validation(self.URL, shapes_graph=None)
+        assert not any("ldes_member_shacl" in r["case_name"] for r in results)
+
+    def test_member_shacl_passes_when_conforms(self):
+        graph = ldes_graph_with_view()
+        shapes_graph = make_graph([(URIRef("urn:s"), URIRef("urn:p"), URIRef("urn:o"))])
+        with patch("ldes_validation.fetch_rdf_graph", return_value=(graph, None)), \
+             patch("ldes_validation.shacl_validate", return_value=(True, None, "")):
+            results = run_ldes_validation(self.URL, shapes_graph=shapes_graph)
+        shacl_result = next(
+            r for r in results if "ldes_member_shacl" in r["case_name"]
+        )
+        assert shacl_result["failure_message"] is None
+        assert shacl_result["error"] is None
+
+    def test_member_shacl_fails_when_not_conforms(self):
+        graph = ldes_graph_with_view()
+        shapes_graph = make_graph([(URIRef("urn:s"), URIRef("urn:p"), URIRef("urn:o"))])
+        report_text = "Constraint violation"
+        with patch("ldes_validation.fetch_rdf_graph", return_value=(graph, None)), \
+             patch("ldes_validation.shacl_validate", return_value=(False, None, report_text)):
+            results = run_ldes_validation(self.URL, shapes_graph=shapes_graph)
+        shacl_result = next(
+            r for r in results if "ldes_member_shacl" in r["case_name"]
+        )
+        assert shacl_result["failure_message"] == "SHACL validation failed"
+        assert shacl_result["failure_text"] == report_text
+
+    def test_member_shacl_error_when_exception(self):
+        graph = ldes_graph_with_view()
+        shapes_graph = make_graph([(URIRef("urn:s"), URIRef("urn:p"), URIRef("urn:o"))])
+        with patch("ldes_validation.fetch_rdf_graph", return_value=(graph, None)), \
+             patch("ldes_validation.shacl_validate", side_effect=Exception("pyshacl error")):
+            results = run_ldes_validation(self.URL, shapes_graph=shapes_graph)
+        shacl_result = next(
+            r for r in results if "ldes_member_shacl" in r["case_name"]
+        )
+        assert shacl_result["error"] is not None
+        assert "pyshacl error" in shacl_result["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -428,3 +618,49 @@ class TestCreateJunitReport:
         )
         props = {p.name: p.value for p in suites[0].properties()}
         assert props.get("create-issue") == "true"
+
+    def test_shapes_url_property_when_set(self):
+        results = [skipped_test("ldes_validation", "no config")]
+        suites = self._write_and_parse(
+            results,
+            suite_properties={"shapes_url": "https://example.org/shapes.ttl"},
+        )
+        props = {p.name: p.value for p in suites[0].properties()}
+        assert props.get("shapes_url") == "https://example.org/shapes.ttl"
+
+    def test_shapes_url_property_not_added_when_empty(self):
+        results = [skipped_test("ldes_validation", "no config")]
+        suites = self._write_and_parse(
+            results,
+            suite_properties={"shapes_url": ""},
+        )
+        props = {p.name: p.value for p in suites[0].properties()}
+        assert "shapes_url" not in props
+
+    def test_min_members_property_when_set(self):
+        results = [skipped_test("ldes_validation", "no config")]
+        suites = self._write_and_parse(
+            results,
+            suite_properties={"min_members": 5, "min_fragments": 0},
+        )
+        props = {p.name: p.value for p in suites[0].properties()}
+        assert props.get("min_members") == "5"
+
+    def test_min_fragments_property_when_set(self):
+        results = [skipped_test("ldes_validation", "no config")]
+        suites = self._write_and_parse(
+            results,
+            suite_properties={"min_members": 0, "min_fragments": 3},
+        )
+        props = {p.name: p.value for p in suites[0].properties()}
+        assert props.get("min_fragments") == "3"
+
+    def test_min_members_property_not_added_when_zero(self):
+        results = [skipped_test("ldes_validation", "no config")]
+        suites = self._write_and_parse(
+            results,
+            suite_properties={"min_members": 0},
+        )
+        props = {p.name: p.value for p in suites[0].properties()}
+        assert "min_members" not in props
+
