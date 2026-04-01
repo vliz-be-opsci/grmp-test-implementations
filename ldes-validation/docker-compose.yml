@@ -1,0 +1,23 @@
+services:
+  ldesvalidation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ldesvalidation
+    volumes:
+      - ./reports:/reports:rw
+    environment:
+      - TS_NAME=localtestrun
+      - TEST_URLS=['https://marineregions.org/feed.ttl']
+      - TEST_TIMEOUT=30
+      - TEST_MIN-MEMBERS=20
+      - TEST_MIN-FRAGMENTS=6
+      - TEST_SHAPES-URL=
+      - TEST_MAX-AGE-YOUNGEST-MEMBER=24
+    working_dir: /app
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge

@@ -1,0 +1,118 @@
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+@prefix tree:  <https://w3id.org/tree#> .
+@prefix ldes:  <https://w3id.org/ldes#> .
+@prefix dc:    <http://purl.org/dc/terms/> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+# =============================================
+# 1. Shape for the LDES Fragment (the current document)
+# =============================================
+
+:LDESFragmentShape a sh:NodeShape ;
+    sh:targetClass tree:Node ;
+    sh:closed false ;
+    sh:property [
+        sh:path rdf:type ;
+        sh:hasValue tree:Node ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path tree:relation ;
+        sh:node :TreeRelationShape ;
+        sh:minCount 0 ;
+    ] .
+
+# Shape for each tree:relation
+:TreeRelationShape a sh:NodeShape ;
+    sh:closed false ;
+    sh:property [
+        sh:path rdf:type ;
+        sh:or (
+            [ sh:hasValue tree:LessThanRelation ]
+            [ sh:hasValue tree:GreaterThanRelation ]
+            [ sh:hasValue tree:GreaterThanOrEqualToRelation ]
+            [ sh:hasValue tree:EqualToRelation ]
+        ) ;
+        sh:minCount 1 ;
+    ] ;
+    sh:property [
+        sh:path tree:node ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path tree:path ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path tree:value ;
+        sh:or (
+            [ sh:datatype xsd:dateTime ]
+            [ sh:datatype xsd:string ]
+            [ sh:nodeKind sh:Literal ]
+        ) ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] .
+
+# =============================================
+# 2. Shape for the ldes:EventStream
+# =============================================
+
+:EventStreamShape a sh:NodeShape ;
+    sh:targetClass ldes:EventStream ;
+    sh:closed false ;
+    sh:property [
+        sh:path rdf:type ;
+        sh:hasValue ldes:EventStream ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+
+    # timestampPath: MUST be present, value can be any IRI
+    sh:property [
+        sh:path ldes:timestampPath ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+
+    # versionOfPath: MUST be present, value can be any IRI
+    sh:property [
+        sh:path ldes:versionOfPath ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+
+    sh:property [
+        sh:path tree:shape ;
+        sh:nodeKind sh:BlankNode ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path tree:view ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path tree:member ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 0 ;
+    ] .
+
+# =============================================
+# 3. Combined shape for the whole fragment
+# =============================================
+
+:FullLDESFragmentShape a sh:NodeShape ;
+    sh:targetClass tree:Node ;
+    sh:and ( :LDESFragmentShape :EventStreamShape ) ;
+    sh:deactivated false .

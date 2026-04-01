@@ -1,0 +1,995 @@
+#!/usr/bin/env python3
+"""
+LDES Validation Test
+Fetches RDF graphs from one or more URLs and validates them as Linked Data
+Event Streams (LDES), checking for ldes:EventStream declarations, tree:view
+relations, minimum member and fragment counts, optional SHACL validation
+of retrieved members, and optional per-fragment SHACL validation, then
+writes a JUnit XML report.
+"""
+
+import ast
+import contextlib
+import io
+import os
+import sys
+import time
+from datetime import date, datetime, timezone
+
+import requests
+from junitparser import Error, Failure, JUnitXml, Skipped, TestCase, TestSuite
+from pyshacl import validate as shacl_validate
+from rdflib import Graph, Namespace, RDF
+
+LDES = Namespace("https://w3id.org/ldes#")
+TREE = Namespace("https://w3id.org/tree#")
+DCT = Namespace("http://purl.org/dc/terms/")
+PROV = Namespace("http://www.w3.org/ns/prov#")
+SCHEMA = Namespace("https://schema.org/")
+
+# Timestamp predicates checked when looking for member ages, in priority order.
+TIMESTAMP_PREDICATES = [
+    DCT.modified,
+    DCT.created,
+    PROV.generatedAtTime,
+    SCHEMA.dateModified,
+]
+
+RDF_ACCEPT = (
+    "text/turtle, application/ld+json, application/rdf+xml, "
+    "application/n-triples, text/n3, */*;q=0.1"
+)
+
+CONTENT_TYPE_FORMATS = {
+    "text/turtle": "turtle",
+    "application/x-turtle": "turtle",
+    "application/ld+json": "json-ld",
+    "application/json": "json-ld",
+    "application/rdf+xml": "xml",
+    "application/xml": "xml",
+    "text/xml": "xml",
+    "application/n-triples": "nt",
+    "text/n3": "n3",
+}
+
+
+@contextlib.contextmanager
+def capture_output():
+    out = io.StringIO()
+    err = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        yield out, err
+
+
+def _parse_int_env(name, default, *, minimum=None):
+    raw = os.environ.get(name, str(default))
+    try:
+        value = int(raw)
+    except ValueError:
+        print(f"Invalid {name}={raw!r}; falling back to {default}", file=sys.stderr)
+        return default
+    if minimum is not None and value < minimum:
+        print(
+            f"Invalid {name}={raw!r}; must be >= {minimum}. Falling back to {default}",
+            file=sys.stderr,
+        )
+        return default
+    return value
+
+
+def parse_config():
+    raw_urls = os.environ.get("TEST_URLS", "[]")
+    try:
+        parsed_urls = ast.literal_eval(raw_urls)
+    except (ValueError, SyntaxError):
+        parsed_urls = []
+
+    if isinstance(parsed_urls, str):
+        parsed_urls = [parsed_urls]
+    elif not isinstance(parsed_urls, (list, tuple)):
+        raise ValueError("TEST_URLS must be a URL string or list/tuple of URL strings")
+
+    urls = [u for u in parsed_urls if isinstance(u, str) and u]
+
+    return {
+        "urls": urls,
+        "timeout": _parse_int_env("TEST_TIMEOUT", 30, minimum=1),
+        "min_members": _parse_int_env("TEST_MIN-MEMBERS", 0, minimum=0),
+        "min_fragments": _parse_int_env("TEST_MIN-FRAGMENTS", 0, minimum=0),
+        "max_age_youngest_member": _parse_int_env(
+            "TEST_MAX-AGE-YOUNGEST-MEMBER", 0, minimum=0
+        ),
+        "shapes_url": os.environ.get("TEST_SHAPES-URL", ""),
+        "fragment_shapes_url": os.environ.get("TEST_FRAGMENT-SHAPES-URL", ""),
+        "provenance": os.environ.get("SPECIAL_SOURCE_FILE", "unknown"),
+        "create_issue": os.environ.get("SPECIAL_CREATE_ISSUE", "false").lower()
+        == "true",
+    }
+
+
+def _detect_rdf_format(content_type, url):
+    """Detect RDF serialisation format from Content-Type header or URL extension."""
+    if content_type:
+        for ct, fmt in CONTENT_TYPE_FORMATS.items():
+            if ct in content_type:
+                return fmt
+    url_path = url.lower().split("?")[0]
+    if url_path.endswith(".ttl"):
+        return "turtle"
+    if url_path.endswith(".jsonld") or url_path.endswith(".json"):
+        return "json-ld"
+    if url_path.endswith(".rdf") or url_path.endswith(".owl"):
+        return "xml"
+    if url_path.endswith(".nt"):
+        return "nt"
+    if url_path.endswith(".n3"):
+        return "n3"
+    return "turtle"
+
+
+def fetch_rdf_graph(url, timeout=30):
+    """Fetch a URL and parse it as an rdflib Graph. Returns (graph, error_string)."""
+    try:
+        response = requests.get(
+            url, headers={"Accept": RDF_ACCEPT}, timeout=timeout
+        )
+        response.raise_for_status()
+        content_type = response.headers.get("Content-Type", "")
+        rdf_format = _detect_rdf_format(content_type, url)
+        print(
+            f"HTTP {response.status_code}, Content-Type: {content_type!r}, "
+            f"format: {rdf_format}"
+        )
+        g = Graph()
+        g.parse(data=response.text, format=rdf_format)
+        return g, None
+    except Exception as e:
+        return None, str(e)
+
+
+def fetch_shapes_graph(url, timeout=30):
+    """Fetch a SHACL shapes graph from a URL. Returns (graph, error_string)."""
+    print(f"Fetching SHACL shapes graph from: {url}")
+    return fetch_rdf_graph(url, timeout=timeout)
+
+
+def _validate_fragment_graph(data_graph, shapes_graph, fragment_url):
+    """
+    Validate a single fragment graph against a SHACL shapes graph.
+
+    Returns:
+        (conforms, results_text) where conforms is True/False/None
+        (None on engine error) and results_text is the SHACL report text.
+    """
+    try:
+        conforms, _results_graph, results_text = shacl_validate(
+            data_graph, shacl_graph=shapes_graph,
+        )
+        return conforms, results_text or ""
+    except Exception as e:
+        print(
+            f"SHACL fragment validation error for {fragment_url}: {e}",
+            file=sys.stderr,
+        )
+        return None, str(e)
+
+
+def traverse_ldes_feed(root_url, root_graph, timeout=30, max_fragments=None,
+                        fragment_shapes_graph=None):
+    """
+    Traverse an LDES feed by following tree:node links discovered via
+    tree:Relation nodes.  Starting from the tree:view targets declared in
+    root_graph, each linked fragment page is fetched and its own tree:node
+    links are followed recursively.  A visited-set prevents infinite loops.
+
+    Args:
+        root_url               – URL of the root page (already fetched into root_graph)
+        root_graph             – pre-fetched rdflib.Graph of the root page
+        timeout                – HTTP request timeout in seconds
+        max_fragments          – if given, traversal stops once this many fragment pages
+                                have been successfully fetched (root counts as one).
+                                None means traverse the entire feed.
+        fragment_shapes_graph  – optional SHACL shapes graph.  When provided, each
+                                successfully fetched fragment is validated against
+                                these shapes.
+
+    Returns:
+        merged_graph   – rdflib.Graph merging all successfully visited pages
+        traversed_urls – set of page URLs successfully fetched (including root)
+        errors         – list of (url, error_string) for pages that could not
+                         be fetched or parsed
+        fragment_validation – dict mapping each traversed fragment URL to a
+                             tuple (conforms: bool|None, results_text: str).
+                             conforms is None on SHACL engine error.
+    """
+    visited = {root_url}
+    merged = Graph()
+    for triple in root_graph:
+        merged.add(triple)
+    traversed_urls = {root_url}
+
+    # Validate the root fragment against shapes (if provided)
+    fragment_validation = {}
+    if fragment_shapes_graph is not None:
+        conforms, results_text = _validate_fragment_graph(
+            root_graph, fragment_shapes_graph, root_url,
+        )
+        fragment_validation[root_url] = (conforms, results_text)
+
+    # Seed the queue with tree:view targets declared in the root page
+    queue = []
+    for view_node in root_graph.objects(predicate=TREE.view):
+        candidate = str(view_node)
+        if candidate not in visited:
+            queue.append(candidate)
+
+    errors = []
+    while queue:
+        # Stop early once the required number of fragments has been reached
+        if max_fragments is not None and len(traversed_urls) >= max_fragments:
+            break
+
+        fragment_url = queue.pop(0)
+        if fragment_url in visited:
+            continue
+        visited.add(fragment_url)
+
+        print(f"Fetching LDES fragment: {fragment_url}")
+        page_graph, error = fetch_rdf_graph(fragment_url, timeout=timeout)
+        if error:
+            print(
+                f"Could not fetch fragment {fragment_url}: {error}",
+                file=sys.stderr,
+            )
+            errors.append((fragment_url, error))
+            continue
+
+        traversed_urls.add(fragment_url)
+        for triple in page_graph:
+            merged.add(triple)
+
+        # Validate this fragment against the SHACL shapes (if provided)
+        if fragment_shapes_graph is not None:
+            conforms, results_text = _validate_fragment_graph(
+                page_graph, fragment_shapes_graph, fragment_url,
+            )
+            fragment_validation[fragment_url] = (conforms, results_text)
+
+        # Discover child fragments via tree:node predicates
+        for child_node in page_graph.objects(predicate=TREE.node):
+            child_url = str(child_node)
+            if child_url not in visited:
+                queue.append(child_url)
+
+    return merged, traversed_urls, errors, fragment_validation
+
+
+def find_youngest_member_timestamp(graph):
+    """
+    Search the graph for the most recent timestamp on any tree:member resource.
+
+    Examines dcterms:modified, dcterms:created, prov:generatedAtTime, and
+    schema:dateModified predicates on each member linked from an
+    ldes:EventStream via tree:member.  Returns a timezone-aware datetime
+    representing the most recent (youngest) timestamp found, or None if no
+    parseable timestamp is discovered.
+    """
+    all_streams = list(graph.subjects(RDF.type, LDES.EventStream))
+    members = set()
+    for es in all_streams:
+        members.update(graph.objects(es, TREE.member))
+
+    youngest = None
+    for member in members:
+        for predicate in TIMESTAMP_PREDICATES:
+            for obj in graph.objects(member, predicate):
+                try:
+                    value = obj.toPython()
+                    if isinstance(value, datetime):
+                        dt = value
+                    elif isinstance(value, date):
+                        dt = datetime(value.year, value.month, value.day)
+                    else:
+                        continue
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    if youngest is None or dt > youngest:
+                        youngest = dt
+                except Exception:
+                    continue
+
+    return youngest
+
+
+def skipped_test(case_name, reason):
+    return {
+        "case_name": case_name,
+        "duration": 0.0,
+        "error": None,
+        "failure_message": None,
+        "failure_text": None,
+        "properties": {},
+        "skipped": True,
+        "skipped_message": reason,
+        "stdout": "",
+        "stderr": "",
+    }
+
+
+def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0,
+                        shapes_graph=None, max_age_youngest_member=0,
+                        fragment_shapes_graph=None):
+    """
+    Validate a URL as an LDES event stream.
+
+    Returns a list of result dicts (3 to 8 depending on configuration):
+    1. ldes_harvest                  - can the URL be fetched and parsed as RDF?
+    2. ldes_event_stream             - does the graph declare an ldes:EventStream?
+    3. ldes_tree_view                - does the event stream expose a tree:view?
+    4. ldes_min_members              - does the stream (across all traversed
+                                       fragments) expose >= min_members
+                                       tree:member triples?
+                                       (only when min_members > 0)
+    5. ldes_min_fragments            - were at least min_fragments fragment pages
+                                       reached by following tree:Relation links?
+                                       Traversal stops as soon as min_fragments
+                                       pages have been successfully fetched.
+                                       (only when min_fragments > 0)
+    6. ldes_member_shacl             - do the members (across all traversed
+                                       fragments) conform to the SHACL shapes
+                                       graph?
+                                       (only when shapes_graph is provided)
+    7. ldes_max_age_youngest_member  - is the youngest (most recently timestamped)
+                                       tree:member at most max_age_youngest_member
+                                       hours old?
+                                       (only when max_age_youngest_member > 0)
+    8. ldes_fragment_shacl           - does each traversed fragment individually
+                                       conform to the fragment SHACL shape?
+                                       (only when fragment_shapes_graph is provided)
+
+    Optional checks (4-8) traverse the LDES feed via tree:node links before
+    evaluating.  When min_fragments is set, traversal stops early once that
+    many fragments have been reached; otherwise the full feed is traversed.
+    """
+    results = []
+
+    # ------------------------------------------------------------------
+    # Test 1: RDF harvest
+    # ------------------------------------------------------------------
+    start = time.time()
+    graph = None
+    with capture_output() as (out, err):
+        print(f"Fetching RDF graph from: {url}")
+        graph, harvest_error = fetch_rdf_graph(url, timeout=timeout)
+        if harvest_error:
+            print(f"Failed to fetch/parse RDF: {harvest_error}", file=sys.stderr)
+        else:
+            print(f"Successfully parsed {len(graph)} triple(s)")
+
+    harvest_duration = time.time() - start
+    results.append(
+        {
+            "case_name": f"ldes_harvest [{url}]",
+            "duration": harvest_duration,
+            "error": None,
+            "failure_message": (
+                f"Could not fetch or parse RDF from {url}" if harvest_error else None
+            ),
+            "failure_text": harvest_error if harvest_error else None,
+            "properties": {"urls": url},
+            "skipped": False,
+            "skipped_message": "",
+            "stdout": out.getvalue(),
+            "stderr": err.getvalue(),
+        }
+    )
+
+    if harvest_error:
+        results.append(
+            skipped_test(f"ldes_event_stream [{url}]", "RDF harvest failed")
+        )
+        results.append(skipped_test(f"ldes_tree_view [{url}]", "RDF harvest failed"))
+        if min_members > 0:
+            results.append(
+                skipped_test(f"ldes_min_members [{url}]", "RDF harvest failed")
+            )
+        if min_fragments > 0:
+            results.append(
+                skipped_test(f"ldes_min_fragments [{url}]", "RDF harvest failed")
+            )
+        if shapes_graph is not None:
+            results.append(
+                skipped_test(f"ldes_member_shacl [{url}]", "RDF harvest failed")
+            )
+        if max_age_youngest_member > 0:
+            results.append(
+                skipped_test(
+                    f"ldes_max_age_youngest_member [{url}]", "RDF harvest failed"
+                )
+            )
+        if fragment_shapes_graph is not None:
+            results.append(
+                skipped_test(
+                    f"ldes_fragment_shacl [{url}]", "RDF harvest failed"
+                )
+            )
+        return results
+
+    # ------------------------------------------------------------------
+    # Test 2: ldes:EventStream declaration
+    # ------------------------------------------------------------------
+    start = time.time()
+    with capture_output() as (out, err):
+        event_streams = list(graph.subjects(RDF.type, LDES.EventStream))
+        print(f"Found {len(event_streams)} ldes:EventStream declaration(s)")
+        for es in event_streams:
+            print(f"  EventStream: {es}")
+        if not event_streams:
+            print(
+                "No ldes:EventStream (https://w3id.org/ldes#EventStream) found in graph",
+                file=sys.stderr,
+            )
+
+    event_stream_duration = time.time() - start
+    results.append(
+        {
+            "case_name": f"ldes_event_stream [{url}]",
+            "duration": event_stream_duration,
+            "error": None,
+            "failure_message": (
+                "No ldes:EventStream declaration found" if not event_streams else None
+            ),
+            "failure_text": (
+                f"The graph at {url} does not contain any subject with "
+                "rdf:type ldes:EventStream (https://w3id.org/ldes#EventStream)"
+                if not event_streams
+                else None
+            ),
+            "properties": {"urls": url},
+            "skipped": False,
+            "skipped_message": "",
+            "stdout": out.getvalue(),
+            "stderr": err.getvalue(),
+        }
+    )
+
+    if not event_streams:
+        results.append(
+            skipped_test(f"ldes_tree_view [{url}]", "No ldes:EventStream found")
+        )
+        if min_members > 0:
+            results.append(
+                skipped_test(f"ldes_min_members [{url}]", "No ldes:EventStream found")
+            )
+        if min_fragments > 0:
+            results.append(
+                skipped_test(
+                    f"ldes_min_fragments [{url}]", "No ldes:EventStream found"
+                )
+            )
+        if shapes_graph is not None:
+            results.append(
+                skipped_test(
+                    f"ldes_member_shacl [{url}]", "No ldes:EventStream found"
+                )
+            )
+        if max_age_youngest_member > 0:
+            results.append(
+                skipped_test(
+                    f"ldes_max_age_youngest_member [{url}]",
+                    "No ldes:EventStream found",
+                )
+            )
+        if fragment_shapes_graph is not None:
+            results.append(
+                skipped_test(
+                    f"ldes_fragment_shacl [{url}]",
+                    "No ldes:EventStream found",
+                )
+            )
+        return results
+
+    # ------------------------------------------------------------------
+    # Test 3: tree:view relation
+    # ------------------------------------------------------------------
+    start = time.time()
+    with capture_output() as (out, err):
+        tree_views = []
+        for es in event_streams:
+            views = list(graph.objects(es, TREE.view))
+            tree_views.extend(views)
+        print(f"Found {len(tree_views)} tree:view relation(s)")
+        for tv in tree_views:
+            print(f"  tree:view: {tv}")
+        if not tree_views:
+            print(
+                "No tree:view (https://w3id.org/tree#view) found for any "
+                "ldes:EventStream",
+                file=sys.stderr,
+            )
+
+    tree_view_duration = time.time() - start
+    results.append(
+        {
+            "case_name": f"ldes_tree_view [{url}]",
+            "duration": tree_view_duration,
+            "error": None,
+            "failure_message": (
+                "No tree:view relation found" if not tree_views else None
+            ),
+            "failure_text": (
+                f"None of the ldes:EventStream resources at {url} have a "
+                "tree:view (https://w3id.org/tree#view) relation"
+                if not tree_views
+                else None
+            ),
+            "properties": {"urls": url},
+            "skipped": False,
+            "skipped_message": "",
+            "stdout": out.getvalue(),
+            "stderr": err.getvalue(),
+        }
+    )
+
+    # ------------------------------------------------------------------
+    # Traverse the full feed for optional checks
+    # ------------------------------------------------------------------
+    needs_traversal = (
+        min_members > 0 or min_fragments > 0 or shapes_graph is not None
+        or max_age_youngest_member > 0 or fragment_shapes_graph is not None
+    )
+    if needs_traversal:
+        # When min_fragments is set, stop traversal as soon as that many
+        # fragments have been fetched (no need to traverse the whole feed).
+        max_fragments = min_fragments if min_fragments > 0 else None
+        with capture_output() as (trav_out, trav_err):
+            print(f"Traversing LDES feed from: {url}")
+            merged_graph, traversed_urls, traverse_errors, fragment_validation = traverse_ldes_feed(
+                url, graph, timeout=timeout, max_fragments=max_fragments,
+                fragment_shapes_graph=fragment_shapes_graph,
+            )
+            print(
+                f"Traversal complete: {len(traversed_urls)} fragment(s) fetched, "
+                f"{len(merged_graph)} total triple(s)"
+            )
+            if traverse_errors:
+                for frag_url, frag_err in traverse_errors:
+                    print(
+                        f"Warning: could not fetch fragment {frag_url}: {frag_err}",
+                        file=sys.stderr,
+                    )
+        traversal_stdout = trav_out.getvalue()
+        traversal_stderr = trav_err.getvalue()
+    else:
+        merged_graph = graph
+        traversed_urls = {url}
+        fragment_validation = {}
+        traversal_stdout = ""
+        traversal_stderr = ""
+
+    # ------------------------------------------------------------------
+    # Test 4: minimum member count (optional)
+    # ------------------------------------------------------------------
+    if min_members > 0:
+        start = time.time()
+        with capture_output() as (out, err):
+            # Re-query event streams from merged_graph so that EventStream
+            # declarations in child fragments are also honoured.
+            all_streams = list(merged_graph.subjects(RDF.type, LDES.EventStream))
+            members = set()
+            for es in all_streams:
+                members.update(merged_graph.objects(es, TREE.member))
+            member_count = len(members)
+            print(
+                f"Found {member_count} tree:member(s) across "
+                f"{len(traversed_urls)} traversed fragment(s); "
+                f"required minimum: {min_members}"
+            )
+            if member_count < min_members:
+                print(
+                    f"Insufficient members: {member_count} < {min_members}",
+                    file=sys.stderr,
+                )
+
+        min_members_duration = time.time() - start
+        results.append(
+            {
+                "case_name": f"ldes_min_members [{url}]",
+                "duration": min_members_duration,
+                "error": None,
+                "failure_message": (
+                    f"Insufficient members: found {member_count}, "
+                    f"expected at least {min_members}"
+                    if member_count < min_members
+                    else None
+                ),
+                "failure_text": (
+                    f"The event stream at {url} exposes only {member_count} "
+                    f"tree:member triple(s) across {len(traversed_urls)} "
+                    f"traversed fragment(s), but at least {min_members} "
+                    "are required"
+                    if member_count < min_members
+                    else None
+                ),
+                "properties": {"urls": url},
+                "skipped": False,
+                "skipped_message": "",
+                "stdout": traversal_stdout + out.getvalue(),
+                "stderr": traversal_stderr + err.getvalue(),
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # Test 5: minimum fragment count (optional)
+    # ------------------------------------------------------------------
+    if min_fragments > 0:
+        start = time.time()
+        with capture_output() as (out, err):
+            fragment_count = len(traversed_urls)
+            print(
+                f"Traversed {fragment_count} LDES fragment(s) "
+                f"(following tree:Relation → tree:node links); "
+                f"required minimum: {min_fragments}"
+            )
+            for frag in sorted(traversed_urls):
+                print(f"  fragment: {frag}")
+            if fragment_count < min_fragments:
+                print(
+                    f"Insufficient fragments: {fragment_count} < {min_fragments}",
+                    file=sys.stderr,
+                )
+
+        min_fragments_duration = time.time() - start
+        results.append(
+            {
+                "case_name": f"ldes_min_fragments [{url}]",
+                "duration": min_fragments_duration,
+                "error": None,
+                "failure_message": (
+                    f"Insufficient fragments: traversed {fragment_count}, "
+                    f"expected at least {min_fragments}"
+                    if fragment_count < min_fragments
+                    else None
+                ),
+                "failure_text": (
+                    f"The LDES feed at {url} yielded only {fragment_count} "
+                    f"traversed fragment(s) (following tree:Relation → "
+                    f"tree:node links), but at least {min_fragments} "
+                    "are required"
+                    if fragment_count < min_fragments
+                    else None
+                ),
+                "properties": {"urls": url},
+                "skipped": False,
+                "skipped_message": "",
+                "stdout": traversal_stdout + out.getvalue(),
+                "stderr": traversal_stderr + err.getvalue(),
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # Test 6: SHACL validation of LDES members (optional)
+    # ------------------------------------------------------------------
+    if shapes_graph is not None:
+        start = time.time()
+        shacl_error = None
+        with capture_output() as (out, err):
+            print(
+                f"Running SHACL validation against members from "
+                f"{len(traversed_urls)} traversed fragment(s) of: {url}"
+            )
+            try:
+                conforms, _results_graph, results_text = shacl_validate(
+                    merged_graph, shacl_graph=shapes_graph
+                )
+                if conforms:
+                    print("SHACL validation passed: members conform to shapes")
+                else:
+                    print(
+                        "SHACL validation failed: members do not conform to shapes",
+                        file=sys.stderr,
+                    )
+            except Exception as e:
+                print(f"SHACL validation error: {e}", file=sys.stderr)
+                shacl_error = str(e)
+                conforms = None
+                results_text = ""
+
+        shacl_duration = time.time() - start
+        results.append(
+            {
+                "case_name": f"ldes_member_shacl [{url}]",
+                "duration": shacl_duration,
+                "error": shacl_error,
+                "failure_message": (
+                    "SHACL validation failed"
+                    if shacl_error is None and conforms is False
+                    else None
+                ),
+                "failure_text": (
+                    results_text
+                    if shacl_error is None and conforms is False
+                    else None
+                ),
+                "properties": {"urls": url},
+                "skipped": False,
+                "skipped_message": "",
+                "stdout": traversal_stdout + out.getvalue(),
+                "stderr": traversal_stderr + err.getvalue(),
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # Test 7: maximum age of youngest tree:member (optional)
+    # ------------------------------------------------------------------
+    if max_age_youngest_member > 0:
+        start = time.time()
+        age_error = None
+        youngest_ts = None
+        youngest_age_hours = None
+        with capture_output() as (out, err):
+            print(
+                f"Checking age of youngest tree:member across "
+                f"{len(traversed_urls)} traversed fragment(s) of: {url}"
+            )
+            try:
+                youngest_ts = find_youngest_member_timestamp(merged_graph)
+                if youngest_ts is None:
+                    print(
+                        "No timestamp found on any tree:member "
+                        f"(checked {len(TIMESTAMP_PREDICATES)} predicate(s))",
+                        file=sys.stderr,
+                    )
+                else:
+                    now = datetime.now(timezone.utc)
+                    youngest_age_hours = (now - youngest_ts).total_seconds() / 3600
+                    print(
+                        f"Youngest member timestamp: {youngest_ts.isoformat()}; "
+                        f"age: {youngest_age_hours:.2f} hour(s); "
+                        f"maximum allowed: {max_age_youngest_member} hour(s)"
+                    )
+                    if youngest_age_hours > max_age_youngest_member:
+                        print(
+                            f"Youngest member is too old: "
+                            f"{youngest_age_hours:.2f}h > {max_age_youngest_member}h",
+                            file=sys.stderr,
+                        )
+            except Exception as e:
+                print(f"Error checking youngest member age: {e}", file=sys.stderr)
+                age_error = str(e)
+
+        if age_error is not None:
+            failure_msg = None
+            failure_txt = None
+        elif youngest_ts is None:
+            failure_msg = "No timestamp found on any tree:member"
+            failure_txt = (
+                f"The LDES feed at {url} contains no members with a recognisable "
+                "timestamp (checked dcterms:modified, dcterms:created, "
+                "prov:generatedAtTime, schema:dateModified)"
+            )
+        elif youngest_age_hours > max_age_youngest_member:
+            failure_msg = (
+                f"Youngest member is {youngest_age_hours:.2f}h old, "
+                f"exceeds maximum {max_age_youngest_member}h"
+            )
+            failure_txt = (
+                f"The youngest member of the LDES feed at {url} has timestamp "
+                f"{youngest_ts.isoformat()}, which is {youngest_age_hours:.2f} "
+                f"hour(s) old. The maximum allowed age is "
+                f"{max_age_youngest_member} hour(s)."
+            )
+        else:
+            failure_msg = None
+            failure_txt = None
+
+        max_age_duration = time.time() - start
+        results.append(
+            {
+                "case_name": f"ldes_max_age_youngest_member [{url}]",
+                "duration": max_age_duration,
+                "error": age_error,
+                "failure_message": failure_msg,
+                "failure_text": failure_txt,
+                "properties": {"urls": url},
+                "skipped": False,
+                "skipped_message": "",
+                "stdout": traversal_stdout + out.getvalue(),
+                "stderr": traversal_stderr + err.getvalue(),
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # Test 8: per-fragment SHACL validation (optional)
+    # ------------------------------------------------------------------
+    if fragment_shapes_graph is not None:
+        start = time.time()
+        with capture_output() as (out, err):
+            print(
+                f"Validating {len(fragment_validation)} traversed fragment(s) "
+                f"against SHACL fragment shapes for: {url}"
+            )
+            non_conforming = []
+            shacl_engine_errors = []
+            for frag_url in sorted(fragment_validation):
+                conforms, results_text = fragment_validation[frag_url]
+                if conforms is None:
+                    shacl_engine_errors.append((frag_url, results_text))
+                    print(
+                        f"  {frag_url}: SHACL validation error",
+                        file=sys.stderr,
+                    )
+                elif not conforms:
+                    non_conforming.append((frag_url, results_text))
+                    print(
+                        f"  {frag_url}: does not conform to fragment shapes",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(f"  {frag_url}: conforms")
+
+        frag_shacl_error = None
+        if shacl_engine_errors:
+            frag_shacl_error = "; ".join(
+                f"{u}: {e}" for u, e in shacl_engine_errors
+            )
+
+        if frag_shacl_error is not None:
+            failure_msg = None
+            failure_txt = None
+        elif non_conforming:
+            failure_msg = (
+                f"{len(non_conforming)} of {len(fragment_validation)} "
+                "fragment(s) do not conform to SHACL shapes"
+            )
+            failure_txt = "\n".join(
+                f"Fragment {u} does not conform:\n{t}" for u, t in non_conforming
+            )
+        else:
+            failure_msg = None
+            failure_txt = None
+
+        frag_shacl_duration = time.time() - start
+        results.append(
+            {
+                "case_name": f"ldes_fragment_shacl [{url}]",
+                "duration": frag_shacl_duration,
+                "error": frag_shacl_error,
+                "failure_message": failure_msg,
+                "failure_text": failure_txt,
+                "properties": {"urls": url},
+                "skipped": False,
+                "skipped_message": "",
+                "stdout": traversal_stdout + out.getvalue(),
+                "stderr": traversal_stderr + err.getvalue(),
+            }
+        )
+
+    return results
+
+
+def create_junit_report(suite_name, results, output_file, provenance, suite_properties=None):
+    suite = TestSuite(suite_name)
+    suite.timestamp = datetime.now(timezone.utc).isoformat()
+    total_time = 0.0
+    append_urls = []
+
+    for result in results:
+        case = TestCase(result["case_name"], classname=suite_name)
+        case.time = result["duration"]
+        total_time += result["duration"]
+
+        url = result["properties"].get("urls")
+        if url:
+            append_urls.append(url)
+
+        if result["skipped"]:
+            case.result = [Skipped(message=result["skipped_message"])]
+        else:
+            if result["error"] is not None:
+                err = Error(message="Unexpected error")
+                err.text = str(result["error"])
+                case.result = [err]
+            elif result["failure_message"]:
+                failure = Failure(message=result["failure_message"])
+                failure.text = result["failure_text"]
+                case.result = [failure]
+            if result.get("stdout"):
+                case.system_out = result["stdout"]
+            if result.get("stderr"):
+                case.system_err = result["stderr"]
+
+        suite.add_testcase(case)
+
+    if append_urls:
+        unique_urls = list(dict.fromkeys(append_urls))
+        suite.add_property("urls", ", ".join(unique_urls))
+    # provenance is always included regardless of suite_properties
+    suite.add_property("provenance", provenance)
+    if suite_properties is not None:
+        if suite_properties.get("shapes_url"):
+            suite.add_property("shapes_url", suite_properties["shapes_url"])
+        if suite_properties.get("fragment_shapes_url"):
+            suite.add_property(
+                "fragment_shapes_url", suite_properties["fragment_shapes_url"]
+            )
+        if suite_properties.get("min_members", 0) > 0:
+            suite.add_property("min_members", str(suite_properties["min_members"]))
+        if suite_properties.get("min_fragments", 0) > 0:
+            suite.add_property(
+                "min_fragments", str(suite_properties["min_fragments"])
+            )
+        if suite_properties.get("max_age_youngest_member", 0) > 0:
+            suite.add_property(
+                "max_age_youngest_member",
+                str(suite_properties["max_age_youngest_member"]),
+            )
+        suite.add_property(
+            "create-issue",
+            str(suite_properties.get("create_issue", False)).lower(),
+        )
+    suite.time = total_time
+    xml = JUnitXml()
+    xml.add_testsuite(suite)
+    xml.write(output_file)
+
+
+if __name__ == "__main__":
+    suite_name = os.environ.get("TS_NAME", "ldes-validation")
+    config = parse_config()
+
+    shapes_graph = None
+    if config["shapes_url"]:
+        shapes_graph, shapes_error = fetch_shapes_graph(
+            config["shapes_url"], timeout=config["timeout"]
+        )
+        if shapes_error:
+            print(
+                f"Error fetching SHACL shapes graph: {shapes_error}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(
+            f"Fetched shapes graph with {len(shapes_graph)} triple(s)"
+        )
+
+    fragment_shapes_graph = None
+    if config["fragment_shapes_url"]:
+        fragment_shapes_graph, frag_shapes_error = fetch_shapes_graph(
+            config["fragment_shapes_url"], timeout=config["timeout"]
+        )
+        if frag_shapes_error:
+            print(
+                f"Error fetching fragment SHACL shapes graph: {frag_shapes_error}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(
+            f"Fetched fragment shapes graph with {len(fragment_shapes_graph)} triple(s)"
+        )
+
+    if not config["urls"]:
+        results = [skipped_test("ldes_validation", "No URL(s) configured")]
+    else:
+        results = []
+        for url in config["urls"]:
+            results.extend(
+                run_ldes_validation(
+                    url,
+                    timeout=config["timeout"],
+                    min_members=config["min_members"],
+                    min_fragments=config["min_fragments"],
+                    shapes_graph=shapes_graph,
+                    max_age_youngest_member=config["max_age_youngest_member"],
+                    fragment_shapes_graph=fragment_shapes_graph,
+                )
+            )
+
+    report_path = f"/reports/{suite_name}_report.xml"
+    create_junit_report(
+        suite_name,
+        results,
+        output_file=report_path,
+        provenance=config["provenance"],
+        suite_properties=config,
+    )

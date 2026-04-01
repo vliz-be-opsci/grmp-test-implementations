@@ -56,3 +56,16 @@ Checks whether RDF graphs harvested from one or more data URLs conform to a give
 3) reports conformance (pass) or non-conformance with the validation report text (fail)
 
 The shapes graph is harvested once from the configured `TEST_SHAPES_URL`. It then creates a JUnit XML file containing the results and adds the shapes URL and all tested data URLs as testsuite properties.
+
+### 7 LDES Validation
+
+Checks whether one or more URLs expose a valid Linked Data Event Stream (LDES). For each URL it tests:
+
+1) whether the URL can be fetched and parsed as an RDF graph
+2) whether the graph contains at least one `ldes:EventStream` declaration (`rdf:type ldes:EventStream`)
+3) whether each declared event stream has at least one `tree:view` relation
+4) whether the stream exposes at least the configured minimum number of `ldes:member` triples (optional, controlled by `TEST_MIN-MEMBERS`)
+5) whether the stream exposes at least the configured minimum number of tree fragments (`tree:Node` resources reachable via `tree:view` or `tree:node`, optional, controlled by `TEST_MIN-FRAGMENTS`)
+6) whether the members in the stream's graph conform to a SHACL shapes graph (optional, controlled by `TEST_SHAPES-URL`)
+
+If the RDF harvest fails the subsequent checks are reported as skipped. Similarly, if no `ldes:EventStream` is found the remaining checks are skipped. The `min_members`, `min_fragments` and SHACL checks are only run when their respective configuration parameters are provided. It then creates a JUnit XML file containing the results and adds the tested URLs, configuration thresholds and the SHACL shapes URL as testsuite properties.
