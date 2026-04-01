@@ -264,24 +264,66 @@ def traverse_ldes_feed(root_url, root_graph, timeout=30, max_fragments=None,
     return merged, traversed_urls, errors, fragment_validation
 
 
+def extract_timestamp_path(graph):
+    """
+    Extract the ldes:timestampPath predicate from EventStream declarations in
+    the graph.
+
+    Returns a list of URIRef predicates declared as ldes:timestampPath on any
+    ldes:EventStream in the graph, in discovery order.  Returns an empty list
+    if no ldes:timestampPath is declared.
+    """
+    paths = []
+    for es in graph.subjects(RDF.type, LDES.EventStream):
+        for path in graph.objects(es, LDES.timestampPath):
+            if path not in paths:
+                paths.append(path)
+    return paths
+
+
+def extract_version_of_path(graph):
+    """
+    Extract the ldes:versionOfPath predicate from EventStream declarations in
+    the graph.
+
+    Returns a list of URIRef predicates declared as ldes:versionOfPath on any
+    ldes:EventStream in the graph, in discovery order.  Returns an empty list
+    if no ldes:versionOfPath is declared.
+    """
+    paths = []
+    for es in graph.subjects(RDF.type, LDES.EventStream):
+        for path in graph.objects(es, LDES.versionOfPath):
+            if path not in paths:
+                paths.append(path)
+    return paths
+
+
 def find_youngest_member_timestamp(graph):
     """
     Search the graph for the most recent timestamp on any tree:member resource.
 
-    Examines dcterms:modified, dcterms:created, prov:generatedAtTime, and
-    schema:dateModified predicates on each member linked from an
-    ldes:EventStream via tree:member.  Returns a timezone-aware datetime
-    representing the most recent (youngest) timestamp found, or None if no
-    parseable timestamp is discovered.
+    First inspects ldes:EventStream declarations in the graph for a
+    ldes:timestampPath predicate.  When found, only that predicate is checked
+    on each member.  When no ldes:timestampPath is declared, the function falls
+    back to a hardcoded list of well-known timestamp predicates
+    (dcterms:modified, dcterms:created, prov:generatedAtTime,
+    schema:dateModified).
+
+    Returns a timezone-aware datetime representing the most recent (youngest)
+    timestamp found, or None if no parseable timestamp is discovered.
     """
     all_streams = list(graph.subjects(RDF.type, LDES.EventStream))
     members = set()
     for es in all_streams:
         members.update(graph.objects(es, TREE.member))
 
+    # Prefer the predicate(s) declared via ldes:timestampPath; fall back to
+    # the hardcoded defaults when none are declared in the stream.
+    timestamp_predicates = extract_timestamp_path(graph) or TIMESTAMP_PREDICATES
+
     youngest = None
     for member in members:
-        for predicate in TIMESTAMP_PREDICATES:
+        for predicate in timestamp_predicates:
             for obj in graph.objects(member, predicate):
                 try:
                     value = obj.toPython()
@@ -727,17 +769,34 @@ def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0,
         age_error = None
         youngest_ts = None
         youngest_age_hours = None
+        predicate_labels = []
         with capture_output() as (out, err):
             print(
                 f"Checking age of youngest tree:member across "
                 f"{len(traversed_urls)} traversed fragment(s) of: {url}"
             )
             try:
+                # Determine which timestamp predicate(s) will be used so we can
+                # surface them in diagnostic output and failure messages.
+                ts_paths = extract_timestamp_path(merged_graph)
+                effective_ts_predicates = ts_paths or TIMESTAMP_PREDICATES
+                predicate_labels = [str(p) for p in effective_ts_predicates]
+                if ts_paths:
+                    print(
+                        f"Using ldes:timestampPath predicate(s): "
+                        f"{', '.join(predicate_labels)}"
+                    )
+                else:
+                    print(
+                        "No ldes:timestampPath declared; falling back to default "
+                        f"predicate(s): {', '.join(predicate_labels)}"
+                    )
+
                 youngest_ts = find_youngest_member_timestamp(merged_graph)
                 if youngest_ts is None:
                     print(
                         "No timestamp found on any tree:member "
-                        f"(checked {len(TIMESTAMP_PREDICATES)} predicate(s))",
+                        f"(checked predicate(s): {', '.join(predicate_labels)})",
                         file=sys.stderr,
                     )
                 else:
@@ -765,8 +824,7 @@ def run_ldes_validation(url, timeout=30, min_members=0, min_fragments=0,
             failure_msg = "No timestamp found on any tree:member"
             failure_txt = (
                 f"The LDES feed at {url} contains no members with a recognisable "
-                "timestamp (checked dcterms:modified, dcterms:created, "
-                "prov:generatedAtTime, schema:dateModified)"
+                f"timestamp (checked predicate(s): {', '.join(predicate_labels)})"
             )
         elif youngest_age_hours > max_age_youngest_member:
             failure_msg = (
