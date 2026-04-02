@@ -148,6 +148,42 @@ def check_emptiness_test(params):
     )
 
 
+def check_secrets_test():
+    """
+    Check that at least one SECRET_* environment variable is configured and non-empty.
+    Lists the names of found secrets in stdout — never their values.
+    """
+    start = time.time()
+    with capture_output() as (out, err):
+        secret_keys = [
+            key for key, value in os.environ.items()
+            if key.startswith("SECRET_") and value and value.strip() and value != "None"
+        ]
+
+        for key in sorted(secret_keys):
+            print(f"Found secret: {key}")
+
+        print(f"secret_count: {len(secret_keys)}")
+
+        if len(secret_keys) == 0:
+            failure_message = "No secrets found"
+            failure_text = "No non-empty SECRET_* environment variables are configured."
+            print("No SECRET_* variables found", file=sys.stderr)
+        else:
+            failure_message = None
+            failure_text = None
+
+    duration = time.time() - start
+    return _result(
+        "check_secrets_test",
+        failure_message=failure_message,
+        failure_text=failure_text,
+        stdout=out.getvalue(),
+        stderr=err.getvalue(),
+        duration=duration,
+    )
+
+
 # ---------------------------------------------------------------------------
 # JUnit report
 # ---------------------------------------------------------------------------
@@ -213,9 +249,10 @@ if __name__ == "__main__":
             result_get_env,
             skipped_test("check_emptiness_test",
                          "Skipped because get_env_test did not pass."),
+            check_secrets_test(),
         ]
     else:
-        results = [result_get_env, check_emptiness_test(params)]
+        results = [result_get_env, check_emptiness_test(params), check_secrets_test()]
 
     report_path = f"/reports/{suite_name}_report.xml"
     create_junit_report(

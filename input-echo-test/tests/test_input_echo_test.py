@@ -18,6 +18,7 @@ from input_echo_test import (
     parse_config,
     get_env_test,
     check_emptiness_test,
+    check_secrets_test,
     create_junit_report,
     skipped_test,
 )
@@ -162,6 +163,69 @@ class TestCheckEmptinessTest:
         result = check_emptiness_test({"b_param": "", "a_param": ""})
         lines = result["failure_text"].splitlines()
         assert lines == sorted(lines)
+
+
+# ---------------------------------------------------------------------------
+# check_secrets_test
+# ---------------------------------------------------------------------------
+
+class TestCheckSecretsTest:
+    def test_passes_when_secret_present(self, monkeypatch):
+        monkeypatch.setenv("SECRET_MY_API_KEY", "supersecret")
+        result = check_secrets_test()
+        assert result["failure_message"] is None
+        assert result["error"] is None
+
+    def test_fails_when_no_secrets(self, monkeypatch):
+        for key in list(os.environ.keys()):
+            if key.startswith("SECRET_"):
+                monkeypatch.delenv(key, raising=False)
+        result = check_secrets_test()
+        assert result["failure_message"] is not None
+        assert "No secrets found" in result["failure_message"]
+
+    def test_empty_secret_not_counted(self, monkeypatch):
+        for key in list(os.environ.keys()):
+            if key.startswith("SECRET_"):
+                monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv("SECRET_EMPTY", "")
+        result = check_secrets_test()
+        assert result["failure_message"] is not None
+
+    def test_secret_name_in_stdout(self, monkeypatch):
+        monkeypatch.setenv("SECRET_MY_API_KEY", "supersecret")
+        result = check_secrets_test()
+        assert "SECRET_MY_API_KEY" in result["stdout"]
+
+    def test_secret_value_not_in_stdout(self, monkeypatch):
+        monkeypatch.setenv("SECRET_MY_API_KEY", "supersecret")
+        result = check_secrets_test()
+        assert "supersecret" not in result["stdout"]
+
+    def test_secret_count_in_stdout(self, monkeypatch):
+        for key in list(os.environ.keys()):
+            if key.startswith("SECRET_"):
+                monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv("SECRET_KEY1", "val1")
+        monkeypatch.setenv("SECRET_KEY2", "val2")
+        result = check_secrets_test()
+        assert "secret_count: 2" in result["stdout"]
+
+    def test_no_properties(self, monkeypatch):
+        monkeypatch.setenv("SECRET_MY_API_KEY", "supersecret")
+        result = check_secrets_test()
+        assert result["properties"] == {}
+
+    def test_case_name_is_correct(self, monkeypatch):
+        result = check_secrets_test()
+        assert result["case_name"] == "check_secrets_test"
+
+    def test_failure_goes_to_stderr(self, monkeypatch):
+        for key in list(os.environ.keys()):
+            if key.startswith("SECRET_"):
+                monkeypatch.delenv(key, raising=False)
+        result = check_secrets_test()
+        assert result["stderr"] != ""
 
 
 # ---------------------------------------------------------------------------
