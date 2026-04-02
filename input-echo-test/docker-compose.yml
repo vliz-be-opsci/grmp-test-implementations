@@ -10,6 +10,7 @@ services:
       - TS_NAME=localtestrun
       - TEST_VAR1=localtestvariable
       - TEST_EMPTY_VAR=
+      - SECRET_API_KEY_TEST=supersecretvalue
     working_dir: /app
     networks:
       - test-network
