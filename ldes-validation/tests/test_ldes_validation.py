@@ -22,6 +22,8 @@ from ldes_validation import (
     _detect_rdf_format,
     _validate_fragment_graph,
     create_junit_report,
+    extract_timestamp_path,
+    extract_version_of_path,
     fetch_rdf_graph,
     fetch_shapes_graph,
     find_youngest_member_timestamp,
@@ -1270,4 +1272,276 @@ class TestRunLdesValidationFragmentShacl:
         assert frag_result["error"] is not None
         assert "pyshacl engine error" in frag_result["error"]
         assert frag_result["failure_message"] is None  # no failure, only error
+
+
+# ---------------------------------------------------------------------------
+# extract_timestamp_path / extract_version_of_path
+# ---------------------------------------------------------------------------
+
+
+class TestExtractTimestampPath:
+    def test_returns_empty_when_no_event_stream(self):
+        """No ldes:EventStream means no timestampPath can be found."""
+        g = plain_rdf_graph()
+        assert extract_timestamp_path(g) == []
+
+    def test_returns_empty_when_no_timestamp_path_declared(self):
+        """EventStream without ldes:timestampPath returns empty list."""
+        g = ldes_graph_with_view()
+        assert extract_timestamp_path(g) == []
+
+    def test_returns_declared_timestamp_path(self):
+        """ldes:timestampPath is returned when declared on the EventStream."""
+        stream = URIRef("https://example.org/stream")
+        g = Graph()
+        g.add((stream, RDF.type, LDES.EventStream))
+        g.add((stream, LDES.timestampPath, DCT.modified))
+        result = extract_timestamp_path(g)
+        assert result == [DCT.modified]
+
+    def test_returns_multiple_paths_from_multiple_streams(self):
+        """Multiple EventStreams with different timestampPaths returns all of them."""
+        stream1 = URIRef("https://example.org/stream1")
+        stream2 = URIRef("https://example.org/stream2")
+        g = Graph()
+        g.add((stream1, RDF.type, LDES.EventStream))
+        g.add((stream1, LDES.timestampPath, DCT.modified))
+        g.add((stream2, RDF.type, LDES.EventStream))
+        g.add((stream2, LDES.timestampPath, DCT.created))
+        result = extract_timestamp_path(g)
+        assert DCT.modified in result
+        assert DCT.created in result
+        assert len(result) == 2
+
+    def test_deduplicates_identical_paths(self):
+        """The same predicate declared on two streams appears only once."""
+        stream1 = URIRef("https://example.org/stream1")
+        stream2 = URIRef("https://example.org/stream2")
+        g = Graph()
+        g.add((stream1, RDF.type, LDES.EventStream))
+        g.add((stream1, LDES.timestampPath, DCT.modified))
+        g.add((stream2, RDF.type, LDES.EventStream))
+        g.add((stream2, LDES.timestampPath, DCT.modified))
+        result = extract_timestamp_path(g)
+        assert result.count(DCT.modified) == 1
+
+
+class TestExtractVersionOfPath:
+    def test_returns_empty_when_no_event_stream(self):
+        """No ldes:EventStream means no versionOfPath can be found."""
+        g = plain_rdf_graph()
+        assert extract_version_of_path(g) == []
+
+    def test_returns_empty_when_no_version_of_path_declared(self):
+        """EventStream without ldes:versionOfPath returns empty list."""
+        g = ldes_graph_with_view()
+        assert extract_version_of_path(g) == []
+
+    def test_returns_declared_version_of_path(self):
+        """ldes:versionOfPath is returned when declared on the EventStream."""
+        stream = URIRef("https://example.org/stream")
+        version_of = URIRef("http://purl.org/dc/terms/isVersionOf")
+        g = Graph()
+        g.add((stream, RDF.type, LDES.EventStream))
+        g.add((stream, LDES.versionOfPath, version_of))
+        result = extract_version_of_path(g)
+        assert result == [version_of]
+
+    def test_deduplicates_identical_paths(self):
+        """The same predicate declared on two streams appears only once."""
+        stream1 = URIRef("https://example.org/stream1")
+        stream2 = URIRef("https://example.org/stream2")
+        version_of = URIRef("http://purl.org/dc/terms/isVersionOf")
+        g = Graph()
+        g.add((stream1, RDF.type, LDES.EventStream))
+        g.add((stream1, LDES.versionOfPath, version_of))
+        g.add((stream2, RDF.type, LDES.EventStream))
+        g.add((stream2, LDES.versionOfPath, version_of))
+        result = extract_version_of_path(g)
+        assert result.count(version_of) == 1
+
+
+# ---------------------------------------------------------------------------
+# find_youngest_member_timestamp
+# ---------------------------------------------------------------------------
+
+
+class TestFindYoungestMemberTimestamp:
+    def _stream_with_member(self, member_uri="https://example.org/member/1"):
+        stream = URIRef("https://example.org/stream")
+        member = URIRef(member_uri)
+        g = Graph()
+        g.add((stream, RDF.type, LDES.EventStream))
+        g.add((stream, TREE.member, member))
+        return g, stream, member
+
+    def test_returns_none_when_no_members(self):
+        g = ldes_graph_with_view()
+        assert find_youngest_member_timestamp(g) is None
+
+    def test_returns_none_when_no_matching_timestamp(self):
+        """Member has no known timestamp predicate → None."""
+        g, _, member = self._stream_with_member()
+        assert find_youngest_member_timestamp(g) is None
+
+    def test_returns_timestamp_via_fallback_predicate(self):
+        """Without ldes:timestampPath the fallback predicates are used."""
+        g, _, member = self._stream_with_member()
+        ts = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        g.add((member, DCT.modified, Literal(ts, datatype=XSD.dateTime)))
+        result = find_youngest_member_timestamp(g)
+        assert result is not None
+        assert result == ts
+
+    def test_uses_ldes_timestamp_path_when_declared(self):
+        """When ldes:timestampPath is set, that predicate is used for timestamps."""
+        stream = URIRef("https://example.org/stream")
+        member = URIRef("https://example.org/member/1")
+        custom_pred = URIRef("https://example.org/ns/eventTime")
+        g = Graph()
+        g.add((stream, RDF.type, LDES.EventStream))
+        g.add((stream, LDES.timestampPath, custom_pred))
+        g.add((stream, TREE.member, member))
+        ts = datetime(2024, 6, 1, 0, 0, 0, tzinfo=timezone.utc)
+        g.add((member, custom_pred, Literal(ts, datatype=XSD.dateTime)))
+        result = find_youngest_member_timestamp(g)
+        assert result == ts
+
+    def test_ignores_fallback_predicates_when_timestamp_path_declared(self):
+        """When ldes:timestampPath is declared, fallback predicates are NOT checked."""
+        stream = URIRef("https://example.org/stream")
+        member = URIRef("https://example.org/member/1")
+        custom_pred = URIRef("https://example.org/ns/eventTime")
+        g = Graph()
+        g.add((stream, RDF.type, LDES.EventStream))
+        g.add((stream, LDES.timestampPath, custom_pred))
+        g.add((stream, TREE.member, member))
+        # Only DCT.modified is set (not custom_pred)
+        fallback_ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        g.add((member, DCT.modified, Literal(fallback_ts, datatype=XSD.dateTime)))
+        # Because ldes:timestampPath points to custom_pred, DCT.modified is ignored
+        result = find_youngest_member_timestamp(g)
+        assert result is None
+
+    def test_returns_youngest_across_multiple_members(self):
+        """The most recent timestamp across multiple members is returned."""
+        stream = URIRef("https://example.org/stream")
+        member1 = URIRef("https://example.org/member/1")
+        member2 = URIRef("https://example.org/member/2")
+        g = Graph()
+        g.add((stream, RDF.type, LDES.EventStream))
+        g.add((stream, TREE.member, member1))
+        g.add((stream, TREE.member, member2))
+        old_ts = datetime(2023, 1, 1, tzinfo=timezone.utc)
+        new_ts = datetime(2024, 6, 15, tzinfo=timezone.utc)
+        g.add((member1, DCT.modified, Literal(old_ts, datatype=XSD.dateTime)))
+        g.add((member2, DCT.modified, Literal(new_ts, datatype=XSD.dateTime)))
+        result = find_youngest_member_timestamp(g)
+        assert result == new_ts
+
+    def test_timestamp_path_from_stream_used_on_all_members(self):
+        """ldes:timestampPath declared on the stream applies to all its members."""
+        stream = URIRef("https://example.org/stream")
+        member1 = URIRef("https://example.org/member/1")
+        member2 = URIRef("https://example.org/member/2")
+        custom_pred = URIRef("https://example.org/ns/eventTime")
+        g = Graph()
+        g.add((stream, RDF.type, LDES.EventStream))
+        g.add((stream, LDES.timestampPath, custom_pred))
+        g.add((stream, TREE.member, member1))
+        g.add((stream, TREE.member, member2))
+        ts1 = datetime(2024, 3, 10, tzinfo=timezone.utc)
+        ts2 = datetime(2024, 7, 20, tzinfo=timezone.utc)
+        g.add((member1, custom_pred, Literal(ts1, datatype=XSD.dateTime)))
+        g.add((member2, custom_pred, Literal(ts2, datatype=XSD.dateTime)))
+        result = find_youngest_member_timestamp(g)
+        assert result == ts2
+
+
+# ---------------------------------------------------------------------------
+# run_ldes_validation – max_age_youngest_member uses ldes:timestampPath
+# ---------------------------------------------------------------------------
+
+
+class TestMaxAgeYoungestMemberWithTimestampPath:
+    """Verify that max_age_youngest_member respects ldes:timestampPath."""
+
+    URL = "https://example.org/stream"
+
+    def _graph_with_timestamp_path(self, custom_pred, member_ts):
+        """Build an LDES graph with ldes:timestampPath and a member timestamp."""
+        stream = URIRef("https://example.org/stream")
+        view = URIRef("https://example.org/stream/view")
+        member = URIRef("https://example.org/member/1")
+        g = Graph()
+        g.add((stream, RDF.type, LDES.EventStream))
+        g.add((stream, TREE.view, view))
+        g.add((stream, LDES.timestampPath, custom_pred))
+        g.add((stream, TREE.member, member))
+        g.add((member, custom_pred, Literal(member_ts, datatype=XSD.dateTime)))
+        return g
+
+    def test_passes_when_custom_timestamp_path_is_recent(self):
+        """max_age check passes when the custom predicate carries a recent timestamp."""
+        custom_pred = URIRef("https://example.org/ns/eventTime")
+        recent_ts = datetime.now(timezone.utc) - timedelta(hours=1)
+        graph = self._graph_with_timestamp_path(custom_pred, recent_ts)
+        traversed = {self.URL}
+        with patch("ldes_validation.fetch_rdf_graph", return_value=(graph, None)), \
+             patch("ldes_validation.traverse_ldes_feed",
+                   return_value=(graph, traversed, [], {})):
+            results = run_ldes_validation(
+                self.URL, max_age_youngest_member=24,
+            )
+        age_result = next(
+            r for r in results if "ldes_max_age_youngest_member" in r["case_name"]
+        )
+        assert age_result["failure_message"] is None
+        assert age_result["error"] is None
+
+    def test_fails_when_custom_timestamp_path_is_old(self):
+        """max_age check fails when only the custom predicate has an old timestamp."""
+        custom_pred = URIRef("https://example.org/ns/eventTime")
+        old_ts = datetime.now(timezone.utc) - timedelta(hours=100)
+        graph = self._graph_with_timestamp_path(custom_pred, old_ts)
+        traversed = {self.URL}
+        with patch("ldes_validation.fetch_rdf_graph", return_value=(graph, None)), \
+             patch("ldes_validation.traverse_ldes_feed",
+                   return_value=(graph, traversed, [], {})):
+            results = run_ldes_validation(
+                self.URL, max_age_youngest_member=24,
+            )
+        age_result = next(
+            r for r in results if "ldes_max_age_youngest_member" in r["case_name"]
+        )
+        assert age_result["failure_message"] is not None
+        assert "too old" in age_result["failure_message"].lower() or "exceeds" in age_result["failure_message"].lower()
+
+    def test_failure_text_lists_custom_predicate(self):
+        """When no timestamp is found, failure_text names the custom predicate."""
+        custom_pred = URIRef("https://example.org/ns/eventTime")
+        stream = URIRef("https://example.org/stream")
+        view = URIRef("https://example.org/stream/view")
+        member = URIRef("https://example.org/member/1")
+        # Member has DCT.modified but stream declares a custom timestampPath
+        g = Graph()
+        g.add((stream, RDF.type, LDES.EventStream))
+        g.add((stream, TREE.view, view))
+        g.add((stream, LDES.timestampPath, custom_pred))
+        g.add((stream, TREE.member, member))
+        recent_ts = datetime.now(timezone.utc) - timedelta(hours=1)
+        g.add((member, DCT.modified, Literal(recent_ts, datatype=XSD.dateTime)))
+        traversed = {self.URL}
+        with patch("ldes_validation.fetch_rdf_graph", return_value=(g, None)), \
+             patch("ldes_validation.traverse_ldes_feed",
+                   return_value=(g, traversed, [], {})):
+            results = run_ldes_validation(
+                self.URL, max_age_youngest_member=24,
+            )
+        age_result = next(
+            r for r in results if "ldes_max_age_youngest_member" in r["case_name"]
+        )
+        # DCT.modified value is NOT found via custom_pred → no timestamp
+        assert age_result["failure_message"] == "No timestamp found on any tree:member"
+        assert str(custom_pred) in age_result["failure_text"]
 
