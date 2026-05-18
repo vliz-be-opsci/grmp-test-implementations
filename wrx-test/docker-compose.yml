@@ -1,0 +1,19 @@
+services:
+  wrxtest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wrxtestgrmp
+    volumes:
+      - ./reports:/reports:rw
+    environment:
+      - TS_NAME=localtestrun
+      - TEST_URLS=['https://example.org']
+      - TEST_MIN-TRIPLES=1
+    working_dir: /app
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge
