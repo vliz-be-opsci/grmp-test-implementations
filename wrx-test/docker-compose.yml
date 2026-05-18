@@ -8,7 +8,7 @@ services:
       - ./reports:/reports:rw
     environment:
       - TS_NAME=localtestrun
-      - TEST_URLS=['https://example.org']
+      - TEST_URLS=['https://data.emobon.embrc.eu/']
       - TEST_MIN-TRIPLES=1
     working_dir: /app
     networks:

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites><testsuite name="localtestrun" timestamp="2026-05-18T08:54:23.814875+00:00" tests="1" errors="0" failures="0" skipped="0" time="0.40282154083251953"><properties><property name="min-triples" value="1" /><property name="wrx-format" value="text/turtle" /><property name="triples-found" value="262" /><property name="urls" value="https://data.emobon.embrc.eu/" /><property name="hostnames" value="data.emobon.embrc.eu" /><property name="min-triples" value="1" /><property name="provenance" value="unknown" /><property name="create-issue" value="false" /></properties><testcase name="wrx_triples [https://data.emobon.embrc.eu/]" classname="localtestrun" time="0.40282154083251953"><system-out>Running wrx extraction for: https://data.emobon.embrc.eu/
+Minimum triples required: 1
+wrx format: text/turtle
+triples_found: 262
+query_result_rows: 1
+</system-out></testcase></testsuite></testsuites>
