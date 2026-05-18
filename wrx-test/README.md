@@ -10,8 +10,8 @@ Per URL, one JUnit test case is produced:
 
 ## Configuration Parameters
 
-- `URLS` (required): array of URLs to check
-- `MIN-TRIPLES` (required): minimum number of triples that must be found per URL
+- `TEST_URLS` (required): array of URLs to check
+- `TEST_MIN-TRIPLES` (required): minimum number of triples that must be found per URL
 
 Example orchestrator config:
 

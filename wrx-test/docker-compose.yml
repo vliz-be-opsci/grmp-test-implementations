@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: wrxtestgrmp
+    container_name: wrx-test-runner
     volumes:
       - ./reports:/reports:rw
     environment:
