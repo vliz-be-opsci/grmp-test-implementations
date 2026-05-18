@@ -10,6 +10,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -96,8 +97,9 @@ def skipped_test(case_name, reason):
 
 def _run_wrx_extractor(url):
     script_path = os.path.join(os.path.dirname(__file__), "wrx_fetch.mjs")
+    runtime = "bun" if shutil.which("bun") else "node"
     process = subprocess.run(
-        ["node", script_path, url],
+        [runtime, script_path, url],
         capture_output=True,
         text=True,
         check=False,
