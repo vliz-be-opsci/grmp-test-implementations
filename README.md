@@ -69,3 +69,17 @@ Checks whether one or more URLs expose a valid Linked Data Event Stream (LDES). 
 6) whether the members in the stream's graph conform to a SHACL shapes graph (optional, controlled by `TEST_SHAPES-URL`)
 
 If the RDF harvest fails the subsequent checks are reported as skipped. Similarly, if no `ldes:EventStream` is found the remaining checks are skipped. The `min_members`, `min_fragments` and SHACL checks are only run when their respective configuration parameters are provided. It then creates a JUnit XML file containing the results and adds the tested URLs, configuration thresholds and the SHACL shapes URL as testsuite properties.
+
+### 8 WRX Test
+
+Checks whether RDF triples can be harvested for one or more URLs using the `wrx` JavaScript library. For each URL it:
+
+1) invokes a JavaScript helper (via Python subprocess) that calls `wrx.extractRDF(...)`
+2) parses the returned RDF content again in Python (`rdflib`)
+3) checks that at least the configured minimum number of triples is present (`TEST_MIN-TRIPLES`)
+4) checks that a basic SPARQL query (`SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 1`) resolves
+
+The WRX test expects the following configuration parameters:
+
+- `TEST_URLS`: array of URLs to check
+- `TEST_MIN-TRIPLES`: minimum number of triples required per URL

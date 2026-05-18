@@ -1,0 +1,8 @@
+{
+  "name": "wrx-test-runner",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "wrx": "github:cedricdcc/wrx"
+  }
+}
