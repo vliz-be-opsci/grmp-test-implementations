@@ -70,16 +70,17 @@ Checks whether one or more URLs expose a valid Linked Data Event Stream (LDES). 
 
 If the RDF harvest fails the subsequent checks are reported as skipped. Similarly, if no `ldes:EventStream` is found the remaining checks are skipped. The `min_members`, `min_fragments` and SHACL checks are only run when their respective configuration parameters are provided. It then creates a JUnit XML file containing the results and adds the tested URLs, configuration thresholds and the SHACL shapes URL as testsuite properties.
 
-### 8 WRX Test
+### 8 RT Test (Radical Transparency)
 
-Checks whether RDF triples can be harvested for one or more URLs using the `wrx` JavaScript library. For each URL it:
+Validates web resources, digital assets, and catalogs against the **Radical Transparency (RT)** specifications ([EOSC Semantic Interoperability Proposals](https://github.com/eosc-semantic-interop/if-solutions-proposals)). For each target URL or URI pattern it:
 
-1) invokes a JavaScript helper (via Python subprocess) that calls `wrx.extractRDF(...)`
-2) parses the returned RDF content again in Python (`rdflib`)
-3) checks that at least the configured minimum number of triples is present (`TEST_MIN-TRIPLES`)
-4) checks that a basic SPARQL query (`SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 1`) resolves
+1) harvests web links and conformity declarations from HTTP `Link` headers ([RFC 8288](https://www.rfc-editor.org/info/rfc8288)), linkset documents ([RFC 9264](https://www.rfc-editor.org/info/rfc9264)), XML sitemaps (`<xhtml:link>`, ResourceSync `<rs:ln>`), and `robots.txt`
+2) transparently resolves and expands external linkset references (`rel="linkset"`)
+3) evaluates declared relations (such as `profile`, `describedby`, `item`, `collection`, `cite-as`, `type`, `alternate`, `author`, `license`, `latest-version`, `service-desc`, `service-doc`, `http://schema.org/hasPart`, etc.)
+4) maps link relations to strict IANA RDF predicates (`https://www.iana.org/assignments/relation/{rel}`) for optional graph/SPARQL validation
 
-The WRX test expects the following configuration parameters:
+The RT test accepts:
+- `TEST_CONFIG_PATH`: path to a YAML test configuration file (recommended)
+- `TEST_CONFIG_YAML`: inline YAML test configuration string
+- `TEST_URLS`: array of URLs to check for fallback profile declarations
 
-- `TEST_URLS`: array of URLs to check
-- `TEST_MIN-TRIPLES`: minimum number of triples required per URL

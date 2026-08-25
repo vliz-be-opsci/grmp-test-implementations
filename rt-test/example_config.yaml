@@ -1,0 +1,48 @@
+version: "1.0"
+name: "Radical Transparency Conformance Suite"
+
+tests:
+  - name: "Dataset Profile & Signposting Conformance (RT-P01, RT-P04)"
+    targets:
+      urls:
+        - "https://example.org/dataset/123"
+      patterns:
+        - "https://example.org/dataset/*"
+    expand_linksets: true
+    expect:
+      relations:
+        - rel: "profile"
+          target: "https://example.org/profiles/dataset-v1"
+          exists: true
+
+        - rel: "describedby"
+          type: "application/ld+json"
+          min_count: 1
+
+        - rel: "cite-as"
+          target_pattern: "^https://doi\\.org/10\\..*"
+          exists: true
+
+        - rel: "license"
+          exists: true
+
+        - rel: "latest-version"
+          exists: true
+
+  - name: "Profile Composition Check (RT-P02)"
+    targets:
+      urls:
+        - "https://example.org/profiles/composite-profile"
+    expect:
+      relations:
+        - rel: "http://schema.org/hasPart"
+          min_count: 1
+
+  - name: "Hostwide Sitemap & ResourceSync Discovery (RT-P06)"
+    targets:
+      urls:
+        - "https://example.org/sitemap.xml"
+    expect:
+      relations:
+        - rel: "item"
+          min_count: 1

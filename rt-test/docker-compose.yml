@@ -1,15 +1,15 @@
 services:
-  wrxtest:
+  rttest:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: wrx-test-runner
+    container_name: rt-test
     volumes:
       - ./reports:/reports:rw
+      - ./example_config.yaml:/app/config.yaml:ro
     environment:
       - TS_NAME=localtestrun
-      - TEST_URLS=['https://data.emobon.embrc.eu/']
-      - TEST_MIN-TRIPLES=1
+      - TEST_CONFIG_PATH=/app/config.yaml
     working_dir: /app
     networks:
       - test-network
