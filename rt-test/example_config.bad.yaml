@@ -1,5 +1,5 @@
 version: "1.0"
-name: "EOSC Radical Transparency Reference Conformance Suite"
+name: "EOSC Radical Transparency Gapped Conformance Suite (localhost:8081)"
 
 tests:
   # ---------------------------------------------------------------------------
@@ -8,10 +8,10 @@ tests:
   - name: "Dataset Landing Pages Signposting & Linkset Conformance"
     targets:
       urls:
-        - "http://localhost:8080/id/dataset/arms-mbon.html"
-        - "http://localhost:8080/id/dataset/arms-2018.html"
-        - "http://localhost:8080/id/dataset/north-sea-sensors.html"
-        - "http://localhost:8080/id/dataset/eurobis-occurrences.html"
+        - "http://localhost:8081/id/dataset/arms-mbon.html"
+        - "http://localhost:8081/id/dataset/arms-2018.html"
+        - "http://localhost:8081/id/dataset/north-sea-sensors.html"
+        - "http://localhost:8081/id/dataset/eurobis-occurrences.html"
     expand_linksets: true
     expect:
       relations:
@@ -35,7 +35,7 @@ tests:
           exists: true
 
         - rel: "collection"
-          target: "http://localhost:8080/catalog/"
+          target: "http://localhost:8081/catalog/"
           exists: true
 
   # ---------------------------------------------------------------------------
@@ -44,51 +44,51 @@ tests:
   - name: "ARMS-MBON Marine Genomic Dataset Profile Binding (RT-P01)"
     targets:
       urls:
-        - "http://localhost:8080/id/dataset/arms-mbon.html"
+        - "http://localhost:8081/id/dataset/arms-mbon.html"
     expand_linksets: true
     expect:
       relations:
         - rel: "profile"
-          target: "http://localhost:8080/id/profile/marine-genomic-dataset-profile"
+          target: "http://localhost:8081/id/profile/marine-genomic-dataset-profile"
           exists: true
         - rel: "describes"
-          target: "http://localhost:8080/doi/10.14284/578"
+          target: "http://localhost:8081/doi/10.14284/578"
           exists: true
 
   - name: "ARMS-2018 Marine Ecological Baseline Profile Binding (RT-P01)"
     targets:
       urls:
-        - "http://localhost:8080/id/dataset/arms-2018.html"
+        - "http://localhost:8081/id/dataset/arms-2018.html"
     expand_linksets: true
     expect:
       relations:
         - rel: "profile"
-          target: "http://localhost:8080/id/profile/marine-ecological-baseline-profile"
+          target: "http://localhost:8081/id/profile/marine-ecological-baseline-profile"
           exists: true
         - rel: "describes"
-          target: "http://localhost:8080/doi/10.14284/412"
+          target: "http://localhost:8081/doi/10.14284/412"
           exists: true
 
   - name: "North Sea Sensors Marine Buoy Telemetry Profile Binding (RT-P01)"
     targets:
       urls:
-        - "http://localhost:8080/id/dataset/north-sea-sensors.html"
+        - "http://localhost:8081/id/dataset/north-sea-sensors.html"
     expand_linksets: true
     expect:
       relations:
         - rel: "profile"
-          target: "http://localhost:8080/id/profile/marine-buoy-telemetry-profile"
+          target: "http://localhost:8081/id/profile/marine-buoy-telemetry-profile"
           exists: true
 
   - name: "EurOBIS Darwin Core Occurrence Profile Binding (RT-P01)"
     targets:
       urls:
-        - "http://localhost:8080/id/dataset/eurobis-occurrences.html"
+        - "http://localhost:8081/id/dataset/eurobis-occurrences.html"
     expand_linksets: true
     expect:
       relations:
         - rel: "profile"
-          target: "http://localhost:8080/id/profile/darwin-core-occurrence-profile"
+          target: "http://localhost:8081/id/profile/darwin-core-occurrence-profile"
           exists: true
 
   # ---------------------------------------------------------------------------
@@ -97,10 +97,10 @@ tests:
   - name: "Direct Data Payload Signposting & Persistent Identifiers (RT-P04)"
     targets:
       urls:
-        - "http://localhost:8080/data/arms-mbon-18s.csv"
-        - "http://localhost:8080/data/arms-2018-samples.csv"
-        - "http://localhost:8080/data/north-sea-sensors-latest.csv"
-        - "http://localhost:8080/data/ro-crate-paper.pdf"
+        - "http://localhost:8081/data/arms-mbon-18s.csv"
+        - "http://localhost:8081/data/arms-2018-samples.csv"
+        - "http://localhost:8081/data/north-sea-sensors-latest.csv"
+        - "http://localhost:8081/data/ro-crate-paper.pdf"
     expand_linksets: true
     expect:
       relations:
@@ -120,9 +120,9 @@ tests:
   - name: "Composite Profiles Decomposition (RT-P02)"
     targets:
       urls:
-        - "http://localhost:8080/id/profile/marine-genomic-dataset-profile.html"
-        - "http://localhost:8080/id/profile/marine-ecological-baseline-profile.html"
-        - "http://localhost:8080/id/profile/marine-buoy-telemetry-profile.html"
+        - "http://localhost:8081/id/profile/marine-genomic-dataset-profile.html"
+        - "http://localhost:8081/id/profile/marine-ecological-baseline-profile.html"
+        - "http://localhost:8081/id/profile/marine-buoy-telemetry-profile.html"
     expand_linksets: true
     expect:
       relations:
@@ -144,21 +144,21 @@ tests:
   - name: "Marine Genomic Composite Profile Member Structure (RT-P02)"
     targets:
       urls:
-        - "http://localhost:8080/id/profile/marine-genomic-dataset-profile.html"
+        - "http://localhost:8081/id/profile/marine-genomic-dataset-profile.html"
     expand_linksets: true
     expect:
       relations:
         - rel: "http://schema.org/hasPart"
-          target: "http://localhost:8080/id/profile/schema-dataset-profile"
+          target: "http://localhost:8081/id/profile/schema-dataset-profile"
           exists: true
         - rel: "http://schema.org/hasPart"
-          target: "http://localhost:8080/id/profile/dcat3-dataset-profile"
+          target: "http://localhost:8081/id/profile/dcat3-dataset-profile"
           exists: true
         - rel: "http://schema.org/hasPart"
-          target: "http://localhost:8080/id/profile/ro-crate-package-profile"
+          target: "http://localhost:8081/id/profile/ro-crate-package-profile"
           exists: true
         - rel: "http://schema.org/hasPart"
-          target: "http://localhost:8080/id/profile/darwin-core-occurrence-profile"
+          target: "http://localhost:8081/id/profile/darwin-core-occurrence-profile"
           exists: true
 
   # ---------------------------------------------------------------------------
@@ -167,28 +167,28 @@ tests:
   - name: "Data Service Subsetting API Conformance (RT-P05)"
     targets:
       urls:
-        - "http://localhost:8080/id/service/marineinfo-api.html"
+        - "http://localhost:8081/id/service/marineinfo-api.html"
     expand_linksets: true
     expect:
       relations:
         - rel: "service-desc"
-          target: "http://localhost:8080/api/openapi.json"
+          target: "http://localhost:8081/api/openapi.json"
           exists: true
 
         - rel: "service-doc"
-          target: "http://localhost:8080/api/docs/"
+          target: "http://localhost:8081/api/docs/"
           exists: true
 
         - rel: "service-meta"
-          target: "http://localhost:8080/id/service/marineinfo-api.ttl"
+          target: "http://localhost:8081/id/service/marineinfo-api.ttl"
           exists: true
 
         - rel: "api-catalog"
-          target: "http://localhost:8080/.well-known/api-catalog"
+          target: "http://localhost:8081/.well-known/api-catalog"
           exists: true
 
         - rel: "cite-as"
-          target: "http://localhost:8080/id/dataset/arms-mbon"
+          target: "http://localhost:8081/id/dataset/arms-mbon"
           exists: true
 
         - rel: "type"
@@ -201,12 +201,12 @@ tests:
   - name: "RFC 9727 Hostwide API Catalog Registration (RT-P06)"
     targets:
       urls:
-        - "http://localhost:8080/.well-known/api-catalog"
+        - "http://localhost:8081/.well-known/api-catalog"
     expand_linksets: true
     expect:
       relations:
         - rel: "item"
-          target: "http://localhost:8080/api/observations/v1"
+          target: "http://localhost:8081/api/observations/v1"
           exists: true
 
   # ---------------------------------------------------------------------------
@@ -215,7 +215,7 @@ tests:
   - name: "Hostwide Sitemap & ResourceSync Catalog Discovery (RT-P07)"
     targets:
       urls:
-        - "http://localhost:8080/sitemap.xml"
+        - "http://localhost:8081/sitemap.xml"
     expand_linksets: true
     expect:
       relations:
@@ -223,7 +223,7 @@ tests:
           min_count: 10
 
         - rel: "api-catalog"
-          target: "http://localhost:8080/.well-known/api-catalog"
+          target: "http://localhost:8081/.well-known/api-catalog"
           exists: true
 
         - rel: "type"
@@ -236,8 +236,8 @@ tests:
   - name: "Scholarly Publication Signposting & Linkset Conformance"
     targets:
       urls:
-        - "http://localhost:8080/id/publication/ro-crate-paper.html"
-        - "http://localhost:8080/id/publication/rt-position-paper.html"
+        - "http://localhost:8081/id/publication/ro-crate-paper.html"
+        - "http://localhost:8081/id/publication/rt-position-paper.html"
     expand_linksets: true
     expect:
       relations:
@@ -254,7 +254,7 @@ tests:
           exists: true
 
         - rel: "collection"
-          target: "http://localhost:8080/catalog/"
+          target: "http://localhost:8081/catalog/"
           exists: true
 
   # ---------------------------------------------------------------------------
@@ -263,8 +263,8 @@ tests:
   - name: "Organization & Project Infrastructure Conformance"
     targets:
       urls:
-        - "http://localhost:8080/id/institute/vliz.html"
-        - "http://localhost:8080/id/project/maregraph.html"
+        - "http://localhost:8081/id/institute/vliz.html"
+        - "http://localhost:8081/id/project/maregraph.html"
     expand_linksets: true
     expect:
       relations:
@@ -277,5 +277,5 @@ tests:
           exists: true
 
         - rel: "collection"
-          target: "http://localhost:8080/catalog/"
+          target: "http://localhost:8081/catalog/"
           exists: true

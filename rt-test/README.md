@@ -89,11 +89,43 @@ tests:
 
 ### Running with Docker Compose
 
+You can execute conformance tests using Docker Compose against either the fully compliant reference server (Port 8080) or the simulated gapped server (Port 8081).
+
+#### 1. Reference Implementation Test Suite (Port 8080 — 100% Compliant)
+
+Runs the conformance test suite using [`example_config.yaml`](file:///c:/Users/cedricd/Documents/Github/grmp-test-implementations/rt-test/example_config.yaml) targeting `http://localhost:8080`:
+
 ```bash
 docker compose up --build
 ```
+*or explicitly specifying the file:*
+```bash
+docker compose -f docker-compose.yml up --build
+```
 
 The JUnit XML report is written to `./reports/localtestrun_report.xml`.
+
+#### 2. Gapped / Defective Repository Test Suite (Port 8081 — Expected Defects)
+
+Runs the test suite using [`example_config.bad.yaml`](file:///c:/Users/cedricd/Documents/Github/grmp-test-implementations/rt-test/example_config.bad.yaml) targeting `http://localhost:8081` to verify detection of missing link relations, absent profiles, unanchored payloads, and sitemap/linkset gaps:
+
+```bash
+docker compose -f docker-compose.bad.yaml up --build
+```
+
+The JUnit XML report is written to `./reports/gappedtestrun_report.xml`.
+
+---
+
+### Running Locally with Python CLI
+
+```bash
+# Run against reference server (Port 8080)
+python src/rt_test.py -c example_config.yaml
+
+# Run against gapped server (Port 8081)
+python src/rt_test.py -c example_config.bad.yaml
+```
 
 ### Running Unit Tests
 
@@ -101,3 +133,4 @@ The JUnit XML report is written to `./reports/localtestrun_report.xml`.
 pip install -r requirements-dev.txt
 pytest tests/ -v
 ```
+

@@ -3,12 +3,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: rt-test
+    container_name: rt-test-bad
     volumes:
       - ./reports:/reports:rw
-      - ./example_config.yaml:/app/config.yaml:ro
+      - ./example_config.bad.yaml:/app/config.yaml:ro
     environment:
-      - TS_NAME=localtestrun
+      - TS_NAME=gappedtestrun
       - TEST_CONFIG_PATH=/app/config.yaml
     working_dir: /app
     networks:
