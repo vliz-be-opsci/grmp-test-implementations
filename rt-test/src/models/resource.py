@@ -25,6 +25,8 @@ class ResourceNode:
     referenced_linksets: List[str] = field(default_factory=list)
     raw_content: bytes = b""
     graph: Optional[rdflib.Graph] = None
+    error: Optional[str] = None
+    duration: float = 0.0
 
     @property
     def all_links(self) -> LinkSet:

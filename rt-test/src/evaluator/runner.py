@@ -48,9 +48,11 @@ class SuiteRunner:
         if not target_urls:
             return [
                 AssertionResult(
-                    case_name=f"{test_config.name}: No target URLs resolved",
+                    case_name=f"rt_config [{test_config.name}]",
                     target_url="",
                     passed=True,
+                    skipped=True,
+                    skipped_message="No matching target URLs configured",
                     properties={"skipped": "true", "reason": "No matching target URLs configured"},
                 )
             ]
@@ -63,18 +65,39 @@ class SuiteRunner:
                 expand_linksets=test_config.expand_linksets,
             )
             duration = time.time() - start_time
+            node.duration = duration
 
-            prefix = f"[{url}] "
+            has_expectations = bool(test_config.expect.relations or test_config.expect.min_triples is not None or test_config.expect.sparql_ask)
+
+            if not has_expectations:
+                # Basic reachability/harvest check
+                results.append(
+                    AssertionResult(
+                        case_name=f"rt_harvest [{url}]",
+                        target_url=url,
+                        passed=node.error is None and node.status_code < 400,
+                        error=node.error,
+                        failure_message=f"HTTP status {node.status_code}" if node.status_code >= 400 else None,
+                        failure_text=f"Harvest returned HTTP {node.status_code}" if node.status_code >= 400 else None,
+                        stdout=f"GET {url}\nStatus: {node.status_code}\nDiscovered Links: {len(node.all_links)}",
+                        stderr=node.error or "",
+                        duration=duration,
+                        properties={"url": url, "status_code": str(node.status_code)},
+                    )
+                )
 
             for exp in test_config.expect.relations:
-                res = evaluate_relation_expectation(node, exp, case_prefix=prefix)
+                res = evaluate_relation_expectation(node, exp)
                 res.duration = duration
                 results.append(res)
 
-            rdf_results = evaluate_triples_and_sparql(node, test_config.expect, case_prefix=prefix)
+            rdf_results = evaluate_triples_and_sparql(node, test_config.expect)
             for res in rdf_results:
                 res.duration = duration
                 results.append(res)
+
+        for res in results:
+            res.suite_name = test_config.name
 
         return results
 

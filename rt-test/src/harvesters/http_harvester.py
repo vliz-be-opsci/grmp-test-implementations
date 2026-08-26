@@ -56,14 +56,18 @@ class HttpHarvester(BaseHarvester):
             resp_headers = dict(response.headers)
             content_type = resp_headers.get("content-type", "")
             raw_content = response.content
-        except Exception:
+        except Exception as exc:
             if should_close:
                 client.close()
-            node = ResourceNode(uri=url, status_code=0)
+            node = ResourceNode(uri=url, status_code=0, error=f"HTTP request error: {exc}")
             return node
         finally:
             if should_close:
                 client.close()
+
+        req_error = None
+        if status_code >= 400:
+            req_error = f"HTTP request returned status {status_code}"
 
         direct_links = LinkSet()
 
@@ -119,4 +123,5 @@ class HttpHarvester(BaseHarvester):
             referenced_linksets=linkset_refs,
             raw_content=raw_content,
             graph=graph,
+            error=req_error,
         )

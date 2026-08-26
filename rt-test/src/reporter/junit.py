@@ -15,7 +15,10 @@ from evaluator.matcher import AssertionResult
 
 
 def _hostname(url: str) -> str:
-    return urllib.parse.urlparse(url).hostname or url
+    try:
+        return urllib.parse.urlparse(url).hostname or ""
+    except Exception:
+        return ""
 
 
 def generate_junit_xml(
@@ -26,50 +29,79 @@ def generate_junit_xml(
     create_issue: bool = False,
     extra_properties: Optional[Dict[str, str]] = None,
 ) -> None:
-    """Generate and write a standard JUnit XML report file."""
-    suite = TestSuite(suite_name)
-    suite.timestamp = datetime.now(timezone.utc).isoformat()
-    total_time = 0.0
+    """
+    Generate and write a standard JUnit XML report file.
 
-    urls_seen = set()
-    hostnames_seen = set()
-
+    If results contain multiple distinct suite_name values (corresponding to
+    named test definitions in YAML), each test definition is written as its own
+    TestSuite in the report.
+    """
+    grouped_results: Dict[str, List[AssertionResult]] = {}
     for res in results:
-        case = TestCase(res.case_name, classname=suite_name)
-        case.time = res.duration
-        total_time += res.duration
+        s_name = res.suite_name or suite_name
+        if s_name not in grouped_results:
+            grouped_results[s_name] = []
+        grouped_results[s_name].append(res)
 
-        if res.target_url:
-            urls_seen.add(res.target_url)
-            hostnames_seen.add(_hostname(res.target_url))
+    if not grouped_results:
+        grouped_results[suite_name] = []
 
-        for k, v in res.properties.items():
-            if k not in ("url", "urls", "hostnames"):
-                suite.add_property(f"case.{res.case_name}.{k}", str(v))
+    now_iso = datetime.now(timezone.utc).isoformat()
+    xml = JUnitXml()
 
-        if not res.passed:
-            failure = Failure(message=res.failure_message or "Assertion failed")
-            failure.text = res.failure_text or res.failure_message or "Assertion failed"
-            case.result = [failure]
+    for group_name, group_cases in grouped_results.items():
+        suite = TestSuite(group_name)
+        suite.timestamp = now_iso
+        total_time = 0.0
 
-        suite.add_testcase(case)
+        urls_seen: List[str] = []
+        hostnames_seen: List[str] = []
 
-    if urls_seen:
-        suite.add_property("urls", ", ".join(sorted(urls_seen)))
-    if hostnames_seen:
-        suite.add_property("hostnames", ", ".join(sorted(hostnames_seen)))
+        for res in group_cases:
+            case = TestCase(res.case_name, classname=group_name)
+            case.time = res.duration
+            total_time += res.duration
 
-    suite.add_property("provenance", provenance)
-    suite.add_property("create-issue", str(create_issue).lower())
+            if res.target_url:
+                if res.target_url not in urls_seen:
+                    urls_seen.append(res.target_url)
+                h = _hostname(res.target_url)
+                if h and h not in hostnames_seen:
+                    hostnames_seen.append(h)
 
-    if extra_properties:
-        for k, v in extra_properties.items():
-            suite.add_property(k, str(v))
+            if res.skipped:
+                case.result = [Skipped(message=res.skipped_message or "Test skipped")]
+            elif res.error is not None:
+                err = Error(message="Unexpected error")
+                err.text = str(res.error)
+                case.result = [err]
+            elif not res.passed:
+                failure = Failure(message=res.failure_message or "Assertion failed")
+                failure.text = res.failure_text or res.failure_message or "Assertion failed"
+                case.result = [failure]
 
-    suite.time = total_time
+            if res.stdout:
+                case.system_out = res.stdout
+            if res.stderr:
+                case.system_err = res.stderr
+
+            suite.add_testcase(case)
+
+        if urls_seen:
+            suite.add_property("urls", ", ".join(urls_seen))
+        if hostnames_seen:
+            suite.add_property("hostnames", ", ".join(hostnames_seen))
+
+        suite.add_property("provenance", provenance)
+        suite.add_property("create-issue", str(create_issue).lower())
+
+        if extra_properties:
+            for k, v in extra_properties.items():
+                if k not in ("urls", "hostnames", "provenance", "create-issue"):
+                    suite.add_property(k, str(v))
+
+        suite.time = total_time
+        xml.add_testsuite(suite)
 
     os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
-
-    xml = JUnitXml()
-    xml.add_testsuite(suite)
     xml.write(output_file)

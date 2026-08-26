@@ -69,11 +69,71 @@ def test_end_to_end_suite_run_and_junit_xml():
         testsuites = list(xml)
         assert len(testsuites) == 1
         suite = testsuites[0]
-        assert suite.name == "eosc-rt-testsuite"
+        assert suite.name == "Dataset Conformance Check"
         cases = list(suite)
         assert len(cases) == 3
         for c in cases:
             assert len(c.result) == 0  # No failure / error
+            assert c.name.startswith("rt_relation [https://example.org/dataset/1]")
+            assert c.system_out is not None and "Discovered Links" in c.system_out
+
+        props = {p.name: p.value for p in suite.properties()}
+        assert "urls" in props
+        assert "hostnames" in props
+        assert "provenance" in props
+        assert "create-issue" in props
+        # Verify no case.* pollution in suite properties
+        assert not any(k.startswith("case.") for k in props)
+
+
+@respx.mock
+def test_multi_suite_junit_xml_generation():
+    respx.get("https://example.org/ds1").respond(
+        status_code=200,
+        headers={"Link": '<https://example.org/p1>; rel="profile"'},
+    )
+    respx.get("https://example.org/ds2").respond(
+        status_code=200,
+        headers={"Link": '<https://example.org/p2>; rel="profile"'},
+    )
+
+    yaml_config = """
+    version: "1.0"
+    name: "multi-suite-test"
+    tests:
+      - name: "Dataset 1 Suite"
+        targets:
+          urls: ["https://example.org/ds1"]
+        expect:
+          relations: [{rel: "profile", exists: true}]
+      - name: "Dataset 2 Suite"
+        targets:
+          urls: ["https://example.org/ds2"]
+        expect:
+          relations: [{rel: "profile", exists: true}]
+    """
+    suite_config = load_config_from_yaml(yaml_config)
+    runner = SuiteRunner()
+
+    with httpx.Client() as client:
+        results = runner.run_suite(suite_config, client=client)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        report_file = os.path.join(tmpdir, "report.xml")
+        generate_junit_xml(
+            suite_name=suite_config.name,
+            results=results,
+            output_file=report_file,
+            provenance="test_run",
+        )
+
+        xml = JUnitXml.fromfile(report_file)
+        testsuites = list(xml)
+        assert len(testsuites) == 2
+        assert testsuites[0].name == "Dataset 1 Suite"
+        assert testsuites[1].name == "Dataset 2 Suite"
+        assert len(list(testsuites[0])) == 1
+        assert len(list(testsuites[1])) == 1
 
 
 def test_example_config_yaml_file_loading():

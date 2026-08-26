@@ -99,9 +99,17 @@ def main() -> int:
     runner = SuiteRunner()
     results = runner.run_suite(suite_config)
 
-    failures = sum(1 for r in results if not r.passed)
-    print(f"\nExecution finished: {len(results)} assertion(s) evaluated, {failures} failure(s).")
+    failures = sum(1 for r in results if not r.passed and r.error is None and not r.skipped)
+    errors = sum(1 for r in results if r.error is not None)
+    skipped = sum(1 for r in results if r.skipped)
+    passed = sum(1 for r in results if r.passed and not r.skipped)
+
+    print(f"\nExecution finished: {len(results)} assertion(s) evaluated ({passed} passed, {failures} failed, {errors} error(s), {skipped} skipped).")
     print(f"Writing JUnit XML report to: {report_path}")
+
+    extra_props = {}
+    if getattr(suite_config, "version", None):
+        extra_props["version"] = suite_config.version
 
     generate_junit_xml(
         suite_name=suite_config.name,
@@ -109,6 +117,7 @@ def main() -> int:
         output_file=report_path,
         provenance=provenance,
         create_issue=create_issue,
+        extra_properties=extra_props,
     )
 
     print("Done.")
