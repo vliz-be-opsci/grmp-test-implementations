@@ -1,0 +1,21 @@
+services:
+  rttest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rt-test-bad
+    volumes:
+      - ./reports:/reports:rw
+      - ./example_config.bad.yaml:/app/config.yaml:ro
+    environment:
+      - TS_NAME=gappedtestrun
+      - TEST_CONFIG_PATH=/app/config.yaml
+    working_dir: /app
+    networks:
+      - test-network
+    extra_hosts:
+      - "localhost:host-gateway"
+
+networks:
+  test-network:
+    driver: bridge
