@@ -57,6 +57,7 @@ class SuiteRunner:
                 )
             ]
 
+        harvested_nodes: dict = {}
         for url in target_urls:
             start_time = time.time()
             node = self.harvester.harvest(
@@ -66,6 +67,7 @@ class SuiteRunner:
             )
             duration = time.time() - start_time
             node.duration = duration
+            harvested_nodes[url] = node
 
             has_expectations = bool(test_config.expect.relations or test_config.expect.min_triples is not None or test_config.expect.sparql_ask)
 
@@ -83,6 +85,7 @@ class SuiteRunner:
                         stderr=node.error or "",
                         duration=duration,
                         properties={"url": url, "status_code": str(node.status_code)},
+                        harvest_node=node,
                     )
                 )
 
@@ -96,8 +99,19 @@ class SuiteRunner:
                 res.duration = duration
                 results.append(res)
 
+        from reporter.diagram import ASCIIDiagramRenderer
+
         for res in results:
             res.suite_name = test_config.name
+            res.pattern_id = test_config.pattern_id
+            res.pattern_name = test_config.pattern_name
+            res.pattern_roles = test_config.pattern_roles
+            res.diagram = ASCIIDiagramRenderer.render_assertion_result(res, harvested_nodes)
+
+            if not res.passed and res.diagram:
+                if res.failure_text:
+                    res.failure_text = f"{res.failure_text}\n\n{res.diagram}"
+                res.stdout = f"{res.stdout}\n\n{res.diagram}"
 
         return results
 

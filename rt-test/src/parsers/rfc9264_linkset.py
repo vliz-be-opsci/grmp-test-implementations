@@ -27,8 +27,8 @@ def parse_linkset_json(content: str | bytes, base_url: str = "") -> LinkSet:
         if not isinstance(entry, dict):
             continue
 
-        raw_anchor = entry.get("anchor", base_url)
-        anchor = urljoin(base_url, raw_anchor) if base_url else raw_anchor
+        raw_anchor = entry.get("anchor", base_url) or base_url
+        anchor = urljoin(base_url, raw_anchor) if (base_url and raw_anchor) else (raw_anchor or base_url or "unknown")
 
         for rel, targets in entry.items():
             if rel == "anchor":

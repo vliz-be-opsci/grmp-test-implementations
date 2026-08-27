@@ -46,7 +46,13 @@ class NoLandingPagePattern(RTPattern):
             name="content",
             required=True,
             description="The core content / digital asset URI",
-            aliases=["target", "content_uri", "data_uri", "resource", "url"],
+            aliases=["target", "content_uri", "data_uri", "url"],
+        ),
+        PatternRoleDefinition(
+            name="resource",
+            required=False,
+            description="The conceptual dataset or entity URI described by the metadata",
+            aliases=["dataset", "concept", "entity", "described_resource", "landing_page"],
         ),
         PatternRoleDefinition(
             name="descriptions",
@@ -58,7 +64,7 @@ class NoLandingPagePattern(RTPattern):
         PatternRoleDefinition(
             name="check_descriptions",
             required=False,
-            description="Whether to harvest descriptions to verify rel=describes points back to PID",
+            description="Whether to harvest descriptions to verify rel=describes points back to resource",
             aliases=["verify_descriptions", "test_descriptions"],
         ),
     ]
@@ -69,6 +75,7 @@ class NoLandingPagePattern(RTPattern):
 
         pid_uri = self.get_role_uri("pid")
         content_uri = self.get_role_uri("content")
+        resource_uri = self.get_role_uri("resource") or content_uri
         raw_descriptions = self.get_role_list("descriptions")
         check_descriptions = self.roles.get("check_descriptions", True)
 
@@ -116,20 +123,32 @@ class NoLandingPagePattern(RTPattern):
             )
         )
 
-        # 2. Expectations on each metadata description (rel="describes" back to PID)
+        # 2. Expectations on each metadata description (rel="describes" back to dataset resource URI + alternates)
         if check_descriptions and desc_specs:
             for idx, d_spec in enumerate(desc_specs, start=1):
                 d_url = d_spec["uri"]
                 desc_expectations = [
                     RelationExpectation(
                         rel="describes",
-                        target=pid_uri,
+                        target=resource_uri,
                         exists=True,
                     )
                 ]
+                # Alternate links to sibling description variants
+                for other_spec in desc_specs:
+                    if other_spec["uri"] != d_url:
+                        desc_expectations.append(
+                            RelationExpectation(
+                                rel="alternate",
+                                target=other_spec["uri"],
+                                type=other_spec["type"],
+                                profile=other_spec["profile"],
+                                exists=True,
+                            )
+                        )
                 test_cases.append(
                     self.create_test_case(
-                        name_suffix=f"Description #{idx} [{d_url}] Describes PID",
+                        name_suffix=f"Description #{idx} [{d_url}] Describes Resource & Alternates",
                         target_urls=[d_url],
                         relations=desc_expectations,
                     )

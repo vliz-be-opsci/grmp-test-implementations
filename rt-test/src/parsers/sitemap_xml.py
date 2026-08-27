@@ -45,7 +45,7 @@ def parse_sitemap_xml(content: str | bytes, sitemap_url: str = "") -> Tuple[Link
                 child_sitemaps.append(child_url)
                 linkset.add(
                     WebLink(
-                        anchor=sitemap_url,
+                        anchor=sitemap_url or child_url or "unknown",
                         href=child_url,
                         rel="item",
                         source="sitemap_index",
@@ -63,7 +63,7 @@ def parse_sitemap_xml(content: str | bytes, sitemap_url: str = "") -> Tuple[Link
         if loc_elem is not None and loc_elem.text:
             linkset.add(
                 WebLink(
-                    anchor=sitemap_url,
+                    anchor=sitemap_url or anchor_url or "unknown",
                     href=anchor_url,
                     rel="item",
                     source="sitemap_loc",
@@ -79,7 +79,7 @@ def parse_sitemap_xml(content: str | bytes, sitemap_url: str = "") -> Tuple[Link
                 hreflang = xhtml_elem.get("hreflang")
                 linkset.add(
                     WebLink(
-                        anchor=anchor_url,
+                        anchor=anchor_url or sitemap_url or resolved_href or "unknown",
                         href=resolved_href,
                         rel=rel,
                         media_type=media_type,
@@ -98,7 +98,7 @@ def parse_sitemap_xml(content: str | bytes, sitemap_url: str = "") -> Tuple[Link
                 attributes = {k: v for k, v in rs_elem.attrib.items() if k not in ("rel", "href", "type", "profile")}
                 linkset.add(
                     WebLink(
-                        anchor=anchor_url,
+                        anchor=anchor_url or sitemap_url or resolved_href or "unknown",
                         href=resolved_href,
                         rel=rel,
                         media_type=media_type,

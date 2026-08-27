@@ -60,6 +60,12 @@ class ProfileCompositionPattern(RTPattern):
             description="Whether to harvest the composite profile URI to check hasPart relations",
             aliases=["verify_composite", "check_parent"],
         ),
+        PatternRoleDefinition(
+            name="check_inferred_members",
+            required=False,
+            description="Whether to require explicit/inferred member profile declarations on the resource",
+            aliases=["check_members", "require_inferred", "check_members_on_resource"],
+        ),
     ]
 
     def resolve_test_cases(self) -> List[TestCaseConfig]:
@@ -69,6 +75,8 @@ class ProfileCompositionPattern(RTPattern):
         resource_uri = self.get_role_uri("resource")
         composite_uri = self.get_role_uri("composite_profile")
         member_profiles = self.get_role_list("member_profiles")
+        check_inferred = self.roles.get("check_inferred_members", False)
+        check_composite = self.roles.get("check_composite", True)
 
         test_cases: List[TestCaseConfig] = []
 
@@ -81,28 +89,29 @@ class ProfileCompositionPattern(RTPattern):
             )
         ]
 
-        # Inferred / explicit conformance to each member profile
-        for member in member_profiles:
-            member_uri = member if isinstance(member, str) else member.get("uri", member.get("href"))
-            if member_uri:
-                resource_expectations.append(
-                    RelationExpectation(
-                        rel="profile",
-                        target=member_uri,
-                        exists=True,
+        # Inferred / explicit conformance to each member profile on the resource (if enabled)
+        if check_inferred:
+            for member in member_profiles:
+                member_uri = member if isinstance(member, str) else member.get("uri", member.get("href"))
+                if member_uri:
+                    resource_expectations.append(
+                        RelationExpectation(
+                            rel="profile",
+                            target=member_uri,
+                            exists=True,
+                        )
                     )
-                )
 
         test_cases.append(
             self.create_test_case(
-                name_suffix="Resource Composite & Member Profile Declarations",
+                name_suffix="Resource Composite Profile Declaration",
                 target_urls=[resource_uri],
                 relations=resource_expectations,
             )
         )
 
-        # 2. Composition structure on the composite profile URI if check_composite is enabled
-        if self.roles.get("check_composite"):
+        # 2. Composition structure on the composite profile URI (hasPart links to member profiles)
+        if check_composite:
             comp_expectations: List[RelationExpectation] = []
             for member in member_profiles:
                 member_uri = member if isinstance(member, str) else member.get("uri", member.get("href"))
@@ -117,7 +126,7 @@ class ProfileCompositionPattern(RTPattern):
             if comp_expectations:
                 test_cases.append(
                     self.create_test_case(
-                        name_suffix="Composite Profile Parts",
+                        name_suffix="Composite Profile Parts (hasPart)",
                         target_urls=[composite_uri],
                         relations=comp_expectations,
                     )

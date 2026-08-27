@@ -121,7 +121,7 @@ class TestPT01ProfileDeclaration:
 class TestPT02ProfileComposition:
     """Tests for PT-02 Profile Composition."""
 
-    def test_resolve(self):
+    def test_resolve_default(self):
         pattern = PatternRegistry.create(
             "PT-02",
             roles={
@@ -136,16 +136,35 @@ class TestPT02ProfileComposition:
         )
         cases = pattern.resolve_test_cases()
         assert len(cases) == 2
-        # Resource test case expectations
+        # Resource test case expects composite profile
+        res_targets = [r.target for r in cases[0].expect.relations if r.rel == "profile"]
+        assert res_targets == ["https://example.org/profile/composite"]
+
+        # Composite profile test case expects hasPart to member profiles
+        comp_targets = [r.target for r in cases[1].expect.relations if "hasPart" in r.rel]
+        assert "https://example.org/profile/part1" in comp_targets
+        assert "https://example.org/profile/part2" in comp_targets
+
+    def test_resolve_with_inferred_members(self):
+        pattern = PatternRegistry.create(
+            "PT-02",
+            roles={
+                "resource": "https://example.org/dataset/1",
+                "composite_profile": "https://example.org/profile/composite",
+                "member_profiles": [
+                    "https://example.org/profile/part1",
+                    "https://example.org/profile/part2",
+                ],
+                "check_inferred_members": True,
+                "check_composite": True,
+            },
+        )
+        cases = pattern.resolve_test_cases()
+        assert len(cases) == 2
         res_targets = [r.target for r in cases[0].expect.relations if r.rel == "profile"]
         assert "https://example.org/profile/composite" in res_targets
         assert "https://example.org/profile/part1" in res_targets
         assert "https://example.org/profile/part2" in res_targets
-
-        # Composite profile test case expectations
-        comp_targets = [r.target for r in cases[1].expect.relations if "hasPart" in r.rel]
-        assert "https://example.org/profile/part1" in comp_targets
-        assert "https://example.org/profile/part2" in comp_targets
 
 
 class TestPT03ContentNegotiationMenu:
@@ -191,12 +210,13 @@ class TestPT03ContentNegotiationMenu:
 class TestPT04NoLandingPage:
     """Tests for PT-04 No Landing Page Solution."""
 
-    def test_resolve(self):
+    def test_resolve_with_resource(self):
         pattern = PatternRegistry.create(
             "PT-04",
             roles={
                 "pid": "https://doi.org/10.14284/170",
                 "content": "https://example.org/data/archive.zip",
+                "resource": "https://example.org/id/dataset/170",
                 "descriptions": [
                     {
                         "uri": "https://example.org/meta/desc.ttl",
@@ -217,10 +237,25 @@ class TestPT04NoLandingPage:
         describedby_rels = [r for r in cases[0].expect.relations if r.rel == "describedby"]
         assert len(describedby_rels) == 2
 
-        # Description case
+        # Description case (rel="describes" points to conceptual resource URI)
         assert cases[1].targets.urls == ["https://example.org/meta/desc.ttl"]
         describes_rel = next(r for r in cases[1].expect.relations if r.rel == "describes")
-        assert describes_rel.target == "https://doi.org/10.14284/170"
+        assert describes_rel.target == "https://example.org/id/dataset/170"
+        alt_rel = next(r for r in cases[1].expect.relations if r.rel == "alternate")
+        assert alt_rel.target == "https://example.org/meta/desc.html"
+
+    def test_resolve_default_content(self):
+        pattern = PatternRegistry.create(
+            "PT-04",
+            roles={
+                "pid": "https://doi.org/10.14284/170",
+                "content": "https://example.org/data/archive.zip",
+                "descriptions": ["https://example.org/meta/desc.ttl"],
+            },
+        )
+        cases = pattern.resolve_test_cases()
+        describes_rel = next(r for r in cases[1].expect.relations if r.rel == "describes")
+        assert describes_rel.target == "https://example.org/data/archive.zip"
 
 
 class TestPT05SubsettingAPI:
@@ -290,10 +325,11 @@ class TestPT07CatalogAssistance:
                         "sub_sitemap": "https://example.org/sitemaps/dataset-sitemap.xml",
                     }
                 ],
+                "resources": ["https://example.org/id/dataset/1"],
             },
         )
         cases = pattern.resolve_test_cases()
-        assert len(cases) == 2  # catalog + endpoint
+        assert len(cases) == 4  # catalog + endpoint + sub_sitemap + resource
 
         catalog_rels = {r.rel: r.target for r in cases[0].expect.relations}
         assert catalog_rels["item"] == "https://example.org/feed/dataset"
@@ -303,6 +339,13 @@ class TestPT07CatalogAssistance:
         assert ep_rels["api-catalog"] == "https://example.org/.well-known/api-catalog"
         assert ep_rels["profile"] == "https://w3id.org/ldes/specification"
         assert ep_rels["alternate"] == "https://example.org/sitemaps/dataset-sitemap.xml"
+
+        sub_sm_rels = {r.rel: r.target for r in cases[2].expect.relations}
+        assert sub_sm_rels["self"] == "https://example.org/feed/dataset"
+        assert sub_sm_rels["api-catalog"] == "https://example.org/.well-known/api-catalog"
+
+        res_rels = {r.rel: r.target for r in cases[3].expect.relations}
+        assert res_rels["collection"] == "https://example.org/feed/dataset"
 
 
 class TestPT08LargeLinksets:

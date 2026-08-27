@@ -45,13 +45,56 @@ Both approaches can be used in the same YAML suite or in dedicated files (see [`
 
 ---
 
-### Authoring Test Suites: Patterns vs. Raw Tests
+### Authoring Test Suites: Radical Transparency Patterns (PT-01 to PT-08)
+
+The test suite provides built-in support for all 8 Radical Transparency patterns defined in the [EOSC Linkset Usage Patterns](https://github.com/eosc-semantic-interop/if-solutions-proposals/tree/main/proposals/radical-transparency/linkset-usage-patterns).
+
+Each pattern below details:
+1. **Required HTTP Link Relationships**: What headers/linksets each endpoint must serve.
+2. **Test Output ASCII Diagram**: The structured diagram rendered by `rt-test` during execution.
+3. **Configurable URIs & Roles**: The parameter schema to provide in YAML.
+4. **YAML Example**: Drop-in test configuration.
+
+---
 
 #### 1. Profile Conformity Declaration (PT-01 / RT-P01)
 
-Declare and verify that a resource conforms to a specific profile, and optionally verify the profile's description and type.
+Declares that a resource conforms to a specific functional profile ([RFC 6906](https://www.rfc-editor.org/info/rfc6906)), and optionally verifies profile metadata (`rel="describedby"`) and type declaration (`rel="type"`).
 
-* **Pattern Syntax (Recommended)**:
+* **Required HTTP Link Relationships**:
+  - `GET <resource>` $\rightarrow$ `Link: <<profile>>; rel="profile"`
+  - `GET <profile>` $\rightarrow$ `Link: <<profile_description>>; rel="describedby"`, `Link: <<profile_type>>; rel="type"`
+
+* **Test Output ASCII Diagram**:
+  ```text
+  ==============================================================================
+  DIAGRAM: Profile Conformity Declaration (PT-01)
+  Overall Status: [✓ PASS]
+  ------------------------------------------------------------------------------
+  +----------------------------------------------------------------------------+
+  | Resource: <resource>                                                       |
+  +----------------------------------------------------------------------------+
+          |
+          | rel="profile" [✓ PASS]
+          v
+  +----------------------------------------------------------------------------+
+  | Profile: <profile>                                                         |
+  +----------------------------------------------------------------------------+
+          |
+          +---> rel="describedby" -> <profile_description> [✓ PASS]
+          +---> rel="type"        -> <profile_type>        [✓ PASS]
+  ==============================================================================
+  ```
+
+* **Configurable URIs & Roles (`uris:`)**:
+  | URI Role | Type | Status | Description |
+  | :--- | :--- | :--- | :--- |
+  | `resource` | URI string | **Required** | The target dataset, service, or landing page declaring conformance. |
+  | `profile` | URI string | **Required** | The canonical profile URI that the resource conforms to. |
+  | `profile_description` | URI string | Optional | Documentation or schema describing the profile via `rel="describedby"`. |
+  | `profile_type` | URI string | Optional | Profile type identifier via `rel="type"` (default: `https://www.rfc-editor.org/info/rfc6906`). |
+
+* **YAML Pattern Syntax**:
   ```yaml
   patterns:
     - name: "ARMS Marine Genomic Profile Conformance"
@@ -59,42 +102,103 @@ Declare and verify that a resource conforms to a specific profile, and optionall
       uris:
         resource: "http://localhost:8080/id/dataset/arms-mbon"
         profile: "http://localhost:8080/id/profile/marine-genomic-dataset-profile"
-        profile_description: "http://localhost:8080/id/profile/marine-genomic-dataset-profile.html"
+        profile_description: "http://localhost:8080/id/profile/marine-genomic-dataset-profile.ttl"
         profile_type: "https://www.rfc-editor.org/info/rfc6906"
-  ```
-
-* **Raw Equivalent Syntax**:
-  ```yaml
-  tests:
-    - name: "ARMS Marine Genomic Profile Conformance (Resource)"
-      targets:
-        urls: ["http://localhost:8080/id/dataset/arms-mbon"]
-      expect:
-        relations:
-          - rel: "profile"
-            target: "http://localhost:8080/id/profile/marine-genomic-dataset-profile"
-            exists: true
-
-    - name: "ARMS Marine Genomic Profile Conformance (Profile Metadata)"
-      targets:
-        urls: ["http://localhost:8080/id/profile/marine-genomic-dataset-profile"]
-      expect:
-        relations:
-          - rel: "type"
-            target: "https://www.rfc-editor.org/info/rfc6906"
-            exists: true
-          - rel: "describedby"
-            target: "http://localhost:8080/id/profile/marine-genomic-dataset-profile.html"
-            exists: true
   ```
 
 ---
 
-#### 2. Content Negotiation Menu (PT-03 / RT-P03)
+#### 2. Profile Composition (PT-02 / RT-P02)
 
-Test representation variants for a conceptual identity resource, ensuring variants advertise alternate formats and restore identity after redirects via `rel="self"`.
+Validates hierarchical or composite profiles where a root profile declares member sub-profiles using `rel="http://schema.org/hasPart"`.
 
-* **Pattern Syntax (Recommended)**:
+* **Required HTTP Link Relationships**:
+  - `GET <resource>` $\rightarrow$ `Link: <<composite_profile>>; rel="profile"`
+  - `GET <composite_profile>` $\rightarrow$ `Link: <<member_profile_N>>; rel="http://schema.org/hasPart"`
+
+* **Test Output ASCII Diagram**:
+  ```text
+  ==============================================================================
+  DIAGRAM: Profile Composition (PT-02)
+  Overall Status: [✓ PASS]
+  ------------------------------------------------------------------------------
+  +----------------------------------------------------------------------------+
+  | Resource: <resource>                                                       |
+  +----------------------------------------------------------------------------+
+          |
+          | rel="profile" [✓ PASS]
+          v
+  +----------------------------------------------------------------------------+
+  | Composite Profile: <composite_profile>                                     |
+  +----------------------------------------------------------------------------+
+          |
+          | Member Profiles (rel="http://schema.org/hasPart"):
+          +---> <member_profile_1> [✓ PASS]
+          +---> <member_profile_2> [✓ PASS]
+          +---> <member_profile_3> [✓ PASS]
+  ==============================================================================
+  ```
+
+* **Configurable URIs & Roles (`uris:`)**:
+  | URI Role | Type | Status | Description |
+  | :--- | :--- | :--- | :--- |
+  | `resource` | URI string | **Required** | Target resource referencing the composite profile. |
+  | `composite_profile` | URI string | **Required** | Root composite profile aggregating member specifications. |
+  | `member_profiles` | List of URIs / Objects | **Required** | List of child member sub-profiles composed inside the root profile. |
+  | `check_composite` | Boolean | Optional | Harvest and validate member links directly on the composite profile (default: `true`). |
+
+* **YAML Pattern Syntax**:
+  ```yaml
+  patterns:
+    - name: "Marine Genomic Profile Composition"
+      type: "PT-02"
+      uris:
+        resource: "http://localhost:8080/id/dataset/arms-mbon"
+        composite_profile: "http://localhost:8080/id/profile/marine-genomic-dataset-profile"
+        member_profiles:
+          - "http://localhost:8080/id/profile/schema-dataset-profile"
+          - "http://localhost:8080/id/profile/dcat3-dataset-profile"
+          - "http://localhost:8080/id/profile/ro-crate-package-profile"
+  ```
+
+---
+
+#### 3. Content Negotiation Menu & Variant Self-Restoration (PT-03 / RT-P03)
+
+Validates representation variants for a conceptual identity resource, checking that each variant advertises alternate media types via `rel="alternate"` and restores conceptual identity after HTTP 303 redirects via `rel="self"`.
+
+* **Required HTTP Link Relationships**:
+  - `GET <concept>` $\rightarrow$ `Link: <<variant_menu>>; rel="linkset"`, `Link: <<variant_N>>; rel="alternate"; type="<mime>"`
+  - `GET <variant_N>` $\rightarrow$ `Link: <<concept>>; rel="self"` (restoring canonical identity anchor)
+
+* **Test Output ASCII Diagram**:
+  ```text
+  ==============================================================================
+  DIAGRAM: Content Negotiation Menu (PT-03)
+  Overall Status: [✓ PASS]
+  ------------------------------------------------------------------------------
+  +----------------------------------------------------------------------------+
+  | Concept Identity: <concept>                                                |
+  +----------------------------------------------------------------------------+
+          |
+          +--- rel="linkset" -> <variant_menu> [✓ PASS]
+          |
+          | Representation Variants (rel="alternate"):
+          +---> <variant_1> [<type_1>] [✓ PASS] -> self [<concept>] [✓ PASS]
+          +---> <variant_2> [<type_2>] [✓ PASS] -> self [<concept>] [✓ PASS]
+          +---> <variant_3> [<type_3>] [✓ PASS] -> self [<concept>] [✓ PASS]
+  ==============================================================================
+  ```
+
+* **Configurable URIs & Roles (`uris:`)**:
+  | URI Role | Type | Status | Description |
+  | :--- | :--- | :--- | :--- |
+  | `concept` | URI string | **Required** | The conceptual/abstract resource identity URI (or `self`). |
+  | `variants` | List of Objects / URIs | **Required** | List of format variants (`uri`, optional `type`, optional `profile`). |
+  | `variant_menu` | URI string | Optional | Standalone linkset document aggregating representation variants. |
+  | `check_variants` | Boolean | Optional | Harvest variants and assert `rel="self"` identity restoration (default: `true`). |
+
+* **YAML Pattern Syntax**:
   ```yaml
   patterns:
     - name: "VLIZ Institute Conneg Variants Menu"
@@ -111,155 +215,278 @@ Test representation variants for a conceptual identity resource, ensuring varian
             type: "text/html"
   ```
 
-* **Raw Equivalent Syntax**:
-  ```yaml
-  tests:
-    # 1. Check conceptual resource advertises alternates & linkset
-    - name: "VLIZ Institute Conceptual Resource"
-      targets:
-        urls: ["http://localhost:8080/id/institute/vliz"]
-      expect:
-        relations:
-          - rel: "alternate"
-            target: "http://localhost:8080/id/institute/vliz.ttl"
-            type: "text/turtle"
-            exists: true
-          - rel: "alternate"
-            target: "http://localhost:8080/id/institute/vliz.jsonld"
-            type: "application/ld+json"
-            exists: true
-          - rel: "alternate"
-            target: "http://localhost:8080/id/institute/vliz.html"
-            type: "text/html"
-            exists: true
-          - rel: "linkset"
-            target: "http://localhost:8080/id/institute/vliz.ls.json"
-            exists: true
-
-    # 2. Check each variant restores identity anchor via rel=self
-    - name: "VLIZ Turtle Variant Self Restoration"
-      targets:
-        urls: ["http://localhost:8080/id/institute/vliz.ttl"]
-      expect:
-        relations:
-          - rel: "self"
-            target: "http://localhost:8080/id/institute/vliz"
-            exists: true
-          - rel: "linkset"
-            target: "http://localhost:8080/id/institute/vliz.ls.json"
-            exists: true
-
-    - name: "VLIZ HTML Variant Self Restoration"
-      targets:
-        urls: ["http://localhost:8080/id/institute/vliz.html"]
-      expect:
-        relations:
-          - rel: "self"
-            target: "http://localhost:8080/id/institute/vliz"
-            exists: true
-  ```
-
 ---
 
-#### 3. No Landing Page Solution (PT-04 / RT-P04)
+#### 4. No Landing Page Solution (PT-04 / RT-P04)
 
-Validate direct payload access without requiring an intermediate HTML landing page, connecting data payloads to PIDs via `rel="cite-as"` and to metadata descriptions via `rel="describedby"`.
+Validates direct payload access (CSV, NetCDF, GeoTIFF, PDF) without requiring an intermediate HTML landing page. Connects raw payloads directly to PIDs via `rel="cite-as"` and metadata descriptions via `rel="describedby"`, verifying that metadata descriptions link back to the conceptual dataset/resource URI via `rel="describes"` and link across sibling metadata formats via `rel="alternate"`.
 
-* **Pattern Syntax (Recommended)**:
+* **Required HTTP Link Relationships**:
+  - `GET <content>` $\rightarrow$ `Link: <<pid>>; rel="cite-as"`, `Link: <<description_N>>; rel="describedby"; type="<mime>"`
+  - `GET <description_N>` $\rightarrow$ `Link: <<resource>>; rel="describes"`, `Link: <<other_description>>; rel="alternate"; type="<mime>"`
+
+* **Test Output ASCII Diagram**:
+  ```text
+  ==============================================================================
+  DIAGRAM: No Landing Page Solution (PT-04)
+  Overall Status: [✓ PASS]
+  ------------------------------------------------------------------------------
+  +----------------------------------------------------------------------------+
+  | Content Payload: <content>                                                 |
+  +----------------------------------------------------------------------------+
+          |                                    |
+          | rel="cite-as" [✓ PASS]             | rel="describedby"
+          v                                    v
+    [ PID / Handle ]                 [ Metadata Descriptions ]
+    <pid>                            * <description_1> [<type_1>] [✓ PASS] (describes resource [✓ PASS])
+                                     * <description_2> [<type_2>] [✓ PASS] (describes resource [✓ PASS])
+  ==============================================================================
+  ```
+
+* **Configurable URIs & Roles (`uris:`)**:
+  | URI Role | Type | Status | Description |
+  | :--- | :--- | :--- | :--- |
+  | `pid` | URI string | **Required** | Permanent citation identifier (DOI, Handle, URN) referenced via `rel="cite-as"`. |
+  | `content` | URI string | **Required** | Downloadable data payload URL. |
+  | `resource` | URI string | Optional | Conceptual dataset or entity URI described by metadata descriptions (or `dataset`). |
+  | `descriptions` | List of Objects / URIs | Optional | Metadata description documents (`uri`, optional `type`, optional `profile`). |
+  | `check_descriptions` | Boolean | Optional | Harvest descriptions to verify `rel="describes"` points back to resource (default: `true`). |
+
+* **YAML Pattern Syntax**:
   ```yaml
   patterns:
-    - name: "ARMS Genomic Data Direct CSV Payload"
+    - name: "Direct Dataset Payload Access"
       type: "PT-04"
       uris:
-        pid: "http://localhost:8080/doi/10.14284/578"
-        content: "http://localhost:8080/data/arms-mbon-18s.csv"
+        pid: "https://doi.org/10.14284/170"
+        content: "http://localhost:8080/data/archive-170.zip"
+        resource: "http://localhost:8080/id/dataset/170"
         descriptions:
-          - uri: "http://localhost:8080/id/dataset/arms-mbon.html"
-            type: "text/html"
-          - uri: "http://localhost:8080/id/dataset/arms-mbon.ttl"
+          - uri: "http://localhost:8080/id/dataset/170.ttl"
             type: "text/turtle"
-  ```
-
-* **Raw Equivalent Syntax**:
-  ```yaml
-  tests:
-    - name: "Direct CSV Data Payload Citation & Descriptions"
-      targets:
-        urls: ["http://localhost:8080/data/arms-mbon-18s.csv"]
-      expect:
-        relations:
-          - rel: "cite-as"
-            target: "http://localhost:8080/doi/10.14284/578"
-            exists: true
-          - rel: "describedby"
-            target: "http://localhost:8080/id/dataset/arms-mbon.html"
+          - uri: "http://localhost:8080/id/dataset/170.html"
             type: "text/html"
-            exists: true
-          - rel: "describedby"
-            target: "http://localhost:8080/id/dataset/arms-mbon.ttl"
-            type: "text/turtle"
-            exists: true
-
-    - name: "Metadata Description Describes PID"
-      targets:
-        urls: ["http://localhost:8080/id/dataset/arms-mbon.ttl"]
-      expect:
-        relations:
-          - rel: "describes"
-            target: "http://localhost:8080/doi/10.14284/578"
-            exists: true
   ```
 
 ---
 
-#### 4. Subsetting API & Dynamic Services (PT-05 / RT-P05)
+#### 5. Subsetting & Dynamic Query APIs (PT-05 / RT-P05)
 
-* **Pattern Syntax (Recommended)**:
-  ```yaml
-  patterns:
-    - name: "Marine Observation API"
-      type: "PT-05"
-      uris:
-        dataset: "http://localhost:8080/id/dataset/arms-mbon"
-        base_api: "http://localhost:8080/id/service/marineinfo-api"
-        fragment_api: "http://localhost:8080/api/observations/v1?taxon=123"
-        api_catalog: "http://localhost:8080/.well-known/api-catalog"
-        service_desc: "http://localhost:8080/api/openapi.json"
-        service_doc: "http://localhost:8080/api/docs/"
+Validates dynamic subsetting APIs and query fragment endpoints, linking query responses to the base API service (`rel="collection"`), the master dataset PID (`rel="cite-as"`), API catalogs (`rel="api-catalog"`), and OpenAPI descriptors (`rel="service-desc"`).
+
+* **Required HTTP Link Relationships**:
+  - `GET <base_api>` $\rightarrow$ `Link: <<dataset>>; rel="cite-as"`, `Link: <<fragment_api>>; rel="item"`, `Link: <<api_catalog>>; rel="api-catalog"`, `Link: <<service_desc>>; rel="service-desc"`
+  - `GET <fragment_api>` $\rightarrow$ `Link: <<base_api>>; rel="collection"`, `Link: <<dataset>>; rel="cite-as"`
+
+* **Test Output ASCII Diagram**:
+  ```text
+  ==============================================================================
+  DIAGRAM: Subsetting API & Dynamic Services (PT-05)
+  Overall Status: [✓ PASS]
+  ------------------------------------------------------------------------------
+  +----------------------------------------------------------------------------+
+  | Base API: <base_api>                                                       |
+  +----------------------------------------------------------------------------+
+          |                                    |
+          | rel="cite-as" [✓ PASS]             | rel="item" [✓ PASS]
+          v                                    v
+    [ Dataset PID ]                    [ Fragment API ]
+    <dataset>                          <fragment_api>
+                                               |
+                                               +--- rel="collection" -> <base_api> [✓ PASS]
+                                               +--- rel="cite-as" -> <dataset> [✓ PASS]
+          |
+          | Service Capabilities & Metadata:
+          +--- rel="api-catalog"  -> <api_catalog>  [✓ PASS]
+          +--- rel="service-desc" -> <service_desc> [✓ PASS]
+          +--- rel="service-doc"  -> <service_doc>  [✓ PASS]
+          +--- rel="status"       -> <status>       [✓ PASS]
+  ==============================================================================
   ```
 
-* **Raw Equivalent Syntax**:
-  ```yaml
-  tests:
-    - name: "Base API Metadata & Composition"
-      targets:
-        urls: ["http://localhost:8080/id/service/marineinfo-api"]
-      expect:
-        relations:
-          - rel: "cite-as"
-            target: "http://localhost:8080/id/dataset/arms-mbon"
-            exists: true
-          - rel: "item"
-            target: "http://localhost:8080/api/observations/v1?taxon=123"
-            exists: true
-          - rel: "api-catalog"
-            target: "http://localhost:8080/.well-known/api-catalog"
-            exists: true
-          - rel: "service-desc"
-            target: "http://localhost:8080/api/openapi.json"
-            exists: true
+* **Configurable URIs & Roles (`uris:`)**:
+  | URI Role | Type | Status | Description |
+  | :--- | :--- | :--- | :--- |
+  | `dataset` | URI string | **Required** | Underlying dataset PID / DOI. |
+  | `base_api` | URI string | **Required** | Main API service root endpoint. |
+  | `fragment_api` | URI string | Optional | Subsetting or parameterized query endpoint. |
+  | `api_catalog` | URI string | Optional | Registry / catalog endpoint (`/.well-known/api-catalog`). |
+  | `service_desc` | URI string | Optional | Machine-readable API definition (OpenAPI / Swagger). |
+  | `service_doc` | URI string | Optional | Human documentation URL. |
+  | `status` | URI string | Optional | Health and uptime endpoint. |
 
-    - name: "Fragment API Collection & Citation"
-      targets:
-        urls: ["http://localhost:8080/api/observations/v1?taxon=123"]
-      expect:
-        relations:
-          - rel: "collection"
-            target: "http://localhost:8080/id/service/marineinfo-api"
-            exists: true
-          - rel: "cite-as"
-            target: "http://localhost:8080/id/dataset/arms-mbon"
-            exists: true
+* **YAML Pattern Syntax**:
+  ```yaml
+  patterns:
+    - name: "WoRMS Aphia Subsetting Service"
+      type: "PT-05"
+      uris:
+        dataset: "https://doi.org/10.14284/170"
+        base_api: "http://localhost:8080/rest/"
+        fragment_api: "http://localhost:8080/rest/AphiaRecordsByVernacular/crab?offset=1"
+        api_catalog: "http://localhost:8080/.well-known/api-catalog"
+        service_desc: "http://localhost:8080/rest/api-docs/openapi.yaml"
+        service_doc: "http://localhost:8080/rest/docs"
+        status: "http://localhost:8080/rest/health"
+  ```
+
+---
+
+#### 6. Hostwide Crawler Discovery (PT-06 / RT-P06)
+
+Validates automated hostwide discovery starting from `/robots.txt` $\rightarrow$ primary `sitemap.xml` (with `<rs:ln>` / `<xhtml:link>` signposting annotations) $\rightarrow$ sample discoverable resources.
+
+* **Required HTTP Link Relationships**:
+  - `GET <robots_txt>` $\rightarrow$ contains `Sitemap: <sitemap>`
+  - `GET <sitemap>` $\rightarrow$ contains `<loc>` / `<rs:ln>` references to `<resource_N>`
+
+* **Test Output ASCII Diagram**:
+  ```text
+  ==============================================================================
+  DIAGRAM: Hostwide Crawler Discovery (PT-06)
+  Overall Status: [✓ PASS]
+  ------------------------------------------------------------------------------
+  +----------------------------------------------------------------------------+
+  | Host: <host>                                                               |
+  +----------------------------------------------------------------------------+
+          |
+          v
+    [ robots.txt: <robots_txt> ]
+          | Sitemap directive [✓ PASS]
+          v
+    [ sitemap.xml: <sitemap> ]
+          | Resource links:
+          +---> <resource_1> [✓ PASS]
+          +---> <resource_2> [✓ PASS]
+  ==============================================================================
+  ```
+
+* **Configurable URIs & Roles (`uris:`)**:
+  | URI Role | Type | Status | Description |
+  | :--- | :--- | :--- | :--- |
+  | `host` | URI string | **Required** | Base origin URL of the host (e.g. `http://localhost:8080`). |
+  | `robots_txt` | URI string | Optional | Custom `robots.txt` location (defaults to `<host>/robots.txt`). |
+  | `sitemap` | URI string | Optional | Target `sitemap.xml` URL advertised in `robots.txt`. |
+  | `resources` | List of URIs / Objects | Optional | Key dataset/service resources expected in `<loc>` or `<xhtml:link>`. |
+
+* **YAML Pattern Syntax**:
+  ```yaml
+  patterns:
+    - name: "Hostwide Crawler Discovery"
+      type: "PT-06"
+      uris:
+        host: "http://localhost:8080"
+        robots_txt: "http://localhost:8080/robots.txt"
+        sitemap: "http://localhost:8080/sitemap.xml"
+        resources:
+          - "http://localhost:8080/id/dataset/arms-mbon"
+          - "http://localhost:8080/id/dataset/arms-2018"
+  ```
+
+---
+
+#### 7. Catalog Assistance & Feed Discovery (PT-07 / RT-P07)
+
+Validates [RFC 9727](https://www.rfc-editor.org/info/rfc9727) hostwide API Catalogs (`/.well-known/api-catalog`), sitemap feeds, and endpoint discovery.
+
+* **Required HTTP Link Relationships**:
+  - `GET <api_catalog>` (RFC 9727 `/.well-known/api-catalog`) $\rightarrow$ `Link: <<api_endpoint_N>>; rel="item"`, `Link: <<api_catalog_sitemap>>; rel="alternate"`
+  - `GET <api_endpoint_N>` $\rightarrow$ `Link: <<api_catalog>>; rel="api-catalog"`, `Link: <<profile>>; rel="profile"`, `Link: <<sub_sitemap>>; rel="alternate"`
+  - `GET <sub_sitemap>` $\rightarrow$ `Link: <<api_endpoint_N>>; rel="self"`, `Link: <<api_catalog>>; rel="api-catalog"`
+  - `GET <sub_resource_N>` $\rightarrow$ `Link: <<api_endpoint_N>>; rel="collection"`
+
+* **Test Output ASCII Diagram**:
+  ```text
+  ==============================================================================
+  DIAGRAM: Hostwide API Catalog & Feeds (PT-07)
+  Overall Status: [✓ PASS]
+  ------------------------------------------------------------------------------
+  +----------------------------------------------------------------------------+
+  | API Catalog: <api_catalog>                                                 |
+  +----------------------------------------------------------------------------+
+          | Sitemap link [✓ PASS]
+          v [ <api_catalog_sitemap> ]
+          | Feed Endpoints:
+          +---> <api_endpoint_1> (profile="<profile_1>") [✓ PASS]
+                +--- sub-sitemap: <sub_sitemap_1> [✓ PASS]
+          +---> <api_endpoint_2> (profile="<profile_2>") [✓ PASS]
+  ==============================================================================
+  ```
+
+* **Configurable URIs & Roles (`uris:`)**:
+  | URI Role | Type | Status | Description |
+  | :--- | :--- | :--- | :--- |
+  | `api_catalog` | URI string | **Required** | RFC 9727 API catalog endpoint (`/.well-known/api-catalog`). |
+  | `api_catalog_sitemap` | URI string | Optional | Catalog sitemap feed link. |
+  | `sitemap_index` | URI string | Optional | Sitemap index grouping feed sitemaps. |
+  | `api_endpoints` | List of Objects / URIs | Optional | API endpoints (`uri`, optional `profile`, optional `sub_sitemap`). |
+  | `resources` | List of URIs | Optional | Expected catalog resource items linked back via `rel="collection"`. |
+
+* **YAML Pattern Syntax**:
+  ```yaml
+  patterns:
+    - name: "Hostwide API Catalog & Feeds"
+      type: "PT-07"
+      uris:
+        api_catalog: "http://localhost:8080/.well-known/api-catalog"
+        api_catalog_sitemap: "http://localhost:8080/sitemap.xml"
+        api_endpoints:
+          - uri: "http://localhost:8080/api/observations/v1"
+  ```
+
+---
+
+#### 8. Large Linksets Split-Up (PT-08 / RT-P08)
+
+Validates large linkset partitioning according to [RFC 9264](https://www.rfc-editor.org/info/rfc9264), verifying that a master linkset links to segmented child linksets via `rel="item"` and child linksets link back via `rel="collection"`.
+
+* **Required HTTP Link Relationships**:
+  - `GET <resource>` $\rightarrow$ `Link: <<master_linkset>>; rel="linkset"; type="application/linkset+json"`
+  - `GET <master_linkset>` $\rightarrow$ `Link: <<child_linkset_N>>; rel="item"`
+  - `GET <child_linkset_N>` $\rightarrow$ `Link: <<master_linkset>>; rel="collection"`
+
+* **Test Output ASCII Diagram**:
+  ```text
+  ==============================================================================
+  DIAGRAM: Large Linkset Hierarchy (PT-08)
+  Overall Status: [✓ PASS]
+  ------------------------------------------------------------------------------
+  +----------------------------------------------------------------------------+
+  | Resource: <resource>                                                       |
+  +----------------------------------------------------------------------------+
+          |
+          | rel="linkset" [✓ PASS]
+          v
+  +----------------------------------------------------------------------------+
+  | Master Linkset: <master_linkset>                                           |
+  +----------------------------------------------------------------------------+
+          | Child Linksets:
+          +---> <child_linkset_1> [✓ PASS] (rel="collection" -> <master_linkset> [✓ PASS])
+          +---> <child_linkset_2> [✓ PASS] (rel="collection" -> <master_linkset> [✓ PASS])
+          +---> <child_linkset_3> [✓ PASS] (rel="collection" -> <master_linkset> [✓ PASS])
+  ==============================================================================
+  ```
+
+* **Configurable URIs & Roles (`uris:`)**:
+  | URI Role | Type | Status | Description |
+  | :--- | :--- | :--- | :--- |
+  | `resource` | URI string | **Required** | Primary resource referencing the master linkset document. |
+  | `master_linkset` | URI string | **Required** | Root master linkset document URL (`application/linkset+json`). |
+  | `child_linksets` | List of URIs / Objects | **Required** | Child segmented linksets (e.g. profiles, variants, services linksets). |
+  | `check_children` | Boolean | Optional | Harvest and validate `rel="collection"` on each child linkset (default: `true`). |
+
+* **YAML Pattern Syntax**:
+  ```yaml
+  patterns:
+    - name: "VLIZ Large Linkset Hierarchy"
+      type: "PT-08"
+      uris:
+        resource: "http://localhost:8080/id/institute/vliz"
+        master_linkset: "http://localhost:8080/id/institute/vliz.ls.json"
+        child_linksets:
+          - "http://localhost:8080/id/institute/vliz-profiles.ls.json"
+          - "http://localhost:8080/id/institute/vliz-variants.ls.json"
+          - "http://localhost:8080/id/institute/vliz-services.ls.json"
   ```
 
 ---
@@ -286,8 +513,19 @@ Validate direct payload access without requiring an intermediate HTML landing pa
 | `TEST_CONFIG_YAML` | Inline YAML configuration string. |
 | `TEST_URLS` | Fallback list of URLs to test for basic profile declaration. |
 | `TS_NAME` | Name of the test suite (default: `rt-test`). |
+| `RT_DIAGRAMS` | Control ASCII pattern diagram rendering (`always`, `on-failure`, `never`). Default: `on-failure`. |
 
 ---
+
+### Command Line Options
+
+| Option | Flag | Description | Default |
+| :--- | :--- | :--- | :--- |
+| `--config` | `-c` | Path to test configuration YAML. | `None` / `TEST_CONFIG_PATH` |
+| `--report` | `-r` | Path to JUnit XML report output. | `./reports/{TS_NAME}_report.xml` |
+| `--urls` | `-u` | Ad-hoc target URLs to harvest and test. | `None` |
+| `--expect-rel` | | Expected link relations for ad-hoc URLs. | `profile` |
+| `--diagrams` | | When to print ASCII pattern & provenance diagrams (`always`, `on-failure`, `never`). | `on-failure` |
 
 ## Local Execution & Docker
 

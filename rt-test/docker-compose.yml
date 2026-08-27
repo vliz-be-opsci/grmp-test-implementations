@@ -6,7 +6,7 @@ services:
     container_name: rt-test
     volumes:
       - ./reports:/reports:rw
-      - ./example_config.yaml:/app/config.yaml:ro
+      - ./config_localhost_empirical.yaml:/app/config.yaml:ro
     environment:
       - TS_NAME=localtestrun
       - TEST_CONFIG_PATH=/app/config.yaml

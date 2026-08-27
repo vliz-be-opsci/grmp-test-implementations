@@ -31,6 +31,12 @@ class AssertionResult:
     duration: float = 0.0
     properties: dict = field(default_factory=dict)
     suite_name: str = ""
+    expectation: Optional[RelationExpectation] = None
+    harvest_node: Optional[ResourceNode] = None
+    diagram: str = ""
+    pattern_id: Optional[str] = None
+    pattern_name: Optional[str] = None
+    pattern_roles: dict = field(default_factory=dict)
 
 
 def evaluate_relation_expectation(
@@ -40,6 +46,10 @@ def evaluate_relation_expectation(
 ) -> AssertionResult:
     """Evaluate a single relation expectation against a harvested ResourceNode."""
     rel_spec = f"rel={exp.rel}"
+    if exp.anchor:
+        rel_spec += f" anchor={exp.anchor}"
+    elif exp.anchor_pattern:
+        rel_spec += f" anchor_pattern={exp.anchor_pattern}"
     if exp.target:
         rel_spec += f" target={exp.target}"
     elif exp.target_pattern:
@@ -60,6 +70,8 @@ def evaluate_relation_expectation(
         target_pattern=exp.target_pattern,
         media_type=exp.type,
         profile=exp.profile,
+        anchor=exp.anchor,
+        anchor_pattern=exp.anchor_pattern,
     )
     count = len(matching)
 
@@ -114,31 +126,29 @@ def evaluate_relation_expectation(
                 f"Found: {count} matching relations."
             )
 
-    # Build comprehensive diagnostic stdout
-    stdout_lines = [
-        f"GET {node.uri}",
-        f"HTTP Status: {node.status_code}",
-        f"Content-Type: {node.content_type or 'none'}",
-        (
-            f"Discovered Links: {len(node.all_links)} total "
-            f"({len(node.direct_links)} direct from Link headers/body, "
-            f"{len(node.expanded_links)} expanded from {len(node.referenced_linksets)} linkset(s))"
-        ),
-        f"Evaluated Expectation: {exp.description()}",
-        f"Matched Relations Count: {count}",
-    ]
-    if matching:
-        stdout_lines.append("Matched Links:")
-        for idx, ml in enumerate(matching, 1):
-            line = f"  [{idx}] href=\"{ml.href}\" (rel=\"{ml.rel}\""
-            if ml.media_type:
-                line += f', type="{ml.media_type}"'
-            if ml.profile:
-                line += f', profile="{ml.profile}"'
-            if ml.anchor and ml.anchor != node.uri:
-                line += f', anchor="{ml.anchor}"'
-            line += ")"
-            stdout_lines.append(line)
+    # Build stdout: concise if passed, comprehensive diagnostic if failed
+    if passed:
+        if matching:
+            stdout_lines = [f"Matched: {ml.display_repr()}" for ml in matching]
+        else:
+            stdout_lines = [f"Passed: {exp.description()} (0 matching as expected)"]
+    else:
+        stdout_lines = [
+            f"GET {node.uri}",
+            f"HTTP Status: {node.status_code}",
+            f"Content-Type: {node.content_type or 'none'}",
+            (
+                f"Discovered Links: {len(node.all_links)} total "
+                f"({len(node.direct_links)} direct from Link headers/body, "
+                f"{len(node.expanded_links)} expanded from {len(node.referenced_linksets)} linkset(s))"
+            ),
+            f"Evaluated Expectation: {exp.description()}",
+            f"Matched Relations Count: {count}",
+        ]
+        if matching:
+            stdout_lines.append("Matched Links:")
+            for idx, ml in enumerate(matching, 1):
+                stdout_lines.append(f"  [{idx}] {ml.display_repr()}")
 
     stderr_lines = []
     if error:
@@ -155,6 +165,8 @@ def evaluate_relation_expectation(
         "total_links": str(len(node.all_links)),
         "status_code": str(node.status_code),
     }
+    if exp.anchor:
+        properties["expected_anchor"] = exp.anchor
     if exp.target:
         properties["expected_target"] = exp.target
     if exp.type:
@@ -174,6 +186,8 @@ def evaluate_relation_expectation(
         matched_count=count,
         matched_links=matching,
         properties=properties,
+        expectation=exp,
+        harvest_node=node,
     )
 
 
@@ -203,12 +217,15 @@ def evaluate_triples_and_sparql(
             failure_msg = "Insufficient RDF triples found"
             failure_txt = f"URL: {node.uri}\nExpected >= {expect.min_triples} triples, found {triple_count}."
 
-        stdout = "\n".join([
-            f"RDF Triples Assertion for {node.uri}",
-            f"Consolidated RDF Triples Count: {triple_count}",
-            f"Required Minimum: {expect.min_triples}",
-            f"Outcome: {'PASSED' if passed else 'FAILED'}",
-        ])
+        if passed:
+            stdout = f"Passed: {triple_count} triples found (min={expect.min_triples})"
+        else:
+            stdout = "\n".join([
+                f"RDF Triples Assertion for {node.uri}",
+                f"Consolidated RDF Triples Count: {triple_count}",
+                f"Required Minimum: {expect.min_triples}",
+                f"Outcome: FAILED",
+            ])
         stderr = failure_txt or ""
 
         results.append(
@@ -222,6 +239,7 @@ def evaluate_triples_and_sparql(
                 stderr=stderr,
                 matched_count=triple_count,
                 properties={"url": node.uri, "triples_found": str(triple_count), "min_triples": str(expect.min_triples)},
+                harvest_node=node,
             )
         )
 
@@ -247,12 +265,15 @@ def evaluate_triples_and_sparql(
                 error = f"SPARQL query failed execution: {exc}"
                 failure_txt = f"URL: {node.uri}\nQuery:\n{query}\nError: {exc}"
 
-            stdout = "\n".join([
-                f"SPARQL ASK Assertion #{idx} for {node.uri}",
-                f"Consolidated Graph Triples Count: {triple_count}",
-                f"SPARQL Query:\n{query.strip()}",
-                f"Outcome: {'PASSED' if passed else ('ERROR' if error else 'FAILED')}",
-            ])
+            if passed:
+                stdout = f"Passed: SPARQL query #{idx} returned True"
+            else:
+                stdout = "\n".join([
+                    f"SPARQL ASK Assertion #{idx} for {node.uri}",
+                    f"Consolidated Graph Triples Count: {triple_count}",
+                    f"SPARQL Query:\n{query.strip()}",
+                    f"Outcome: {'ERROR' if error else 'FAILED'}",
+                ])
             stderr = error or failure_txt or ""
 
             results.append(
@@ -266,6 +287,7 @@ def evaluate_triples_and_sparql(
                     stdout=stdout,
                     stderr=stderr,
                     properties={"url": node.uri, "sparql_query": query},
+                    harvest_node=node,
                 )
             )
 

@@ -75,7 +75,7 @@ def test_end_to_end_suite_run_and_junit_xml():
         for c in cases:
             assert len(c.result) == 0  # No failure / error
             assert c.name.startswith("rt_relation [https://example.org/dataset/1]")
-            assert c.system_out is not None and "Discovered Links" in c.system_out
+            assert c.system_out is not None and "Matched:" in c.system_out
 
         props = {p.name: p.value for p in suite.properties()}
         assert "urls" in props

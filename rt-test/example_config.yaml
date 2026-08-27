@@ -51,7 +51,7 @@ tests:
         - rel: "profile"
           target: "http://localhost:8080/id/profile/marine-genomic-dataset-profile"
           exists: true
-        - rel: "describes"
+        - rel: "cite-as"
           target: "http://localhost:8080/doi/10.14284/578"
           exists: true
 
@@ -65,7 +65,7 @@ tests:
         - rel: "profile"
           target: "http://localhost:8080/id/profile/marine-ecological-baseline-profile"
           exists: true
-        - rel: "describes"
+        - rel: "cite-as"
           target: "http://localhost:8080/doi/10.14284/412"
           exists: true
 

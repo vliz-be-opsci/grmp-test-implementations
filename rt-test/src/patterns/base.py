@@ -141,6 +141,9 @@ class RTPattern(ABC):
                 min_triples=min_triples,
                 sparql_ask=sparql_ask,
             ),
+            pattern_id=self.pattern_id,
+            pattern_name=self.pattern_name,
+            pattern_roles=dict(self.roles),
         )
 
     @abstractmethod

@@ -73,9 +73,9 @@ def parse_link_header(header_value: str, context_url: str) -> List[WebLink]:
                 val = val.replace(r'\"', '"')
             params[name] = val
 
-        # Default anchor is the context URL
+        # Default anchor is the context URL, falling back to resolved_href
         anchor = params.get("anchor")
-        resolved_anchor = urljoin(context_url, anchor) if (context_url and anchor) else (anchor or context_url)
+        resolved_anchor = urljoin(context_url, anchor) if (context_url and anchor) else (anchor or context_url or resolved_href or "unknown")
 
         # A link header can specify space-separated relations in rel (e.g. rel="item alternate")
         rel_str = params.get("rel", "")

@@ -12,6 +12,11 @@ import sys
 # Ensure src/ directory is on sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from config.loader import (
     load_config_from_env,
     load_config_from_file,
@@ -53,6 +58,12 @@ def parse_args() -> argparse.Namespace:
         nargs="*",
         help="Expected link relations for ad-hoc URLs",
         default=["profile"],
+    )
+    parser.add_argument(
+        "--diagrams",
+        choices=["always", "on-failure", "never"],
+        default=os.environ.get("RT_DIAGRAMS", "on-failure"),
+        help="Control ASCII pattern diagram display in console (always, on-failure, never). Default: on-failure",
     )
     return parser.parse_args()
 
@@ -100,6 +111,18 @@ def main() -> int:
     runner = SuiteRunner()
     results = runner.run_suite(suite_config)
 
+    diagram_mode = args.diagrams.lower()
+    for res in results:
+        status_tag = "✓ PASSED" if res.passed and not res.skipped else ("⚠ SKIPPED" if res.skipped else "✗ FAILED")
+        print(f"[{status_tag}] {res.case_name}")
+
+        should_print_diagram = (
+            diagram_mode == "always"
+            or (diagram_mode == "on-failure" and not res.passed and not res.skipped)
+        )
+        if should_print_diagram and res.diagram:
+            print(f"\n{res.diagram}\n")
+
     failures = sum(1 for r in results if not r.passed and r.error is None and not r.skipped)
     errors = sum(1 for r in results if r.error is not None)
     skipped = sum(1 for r in results if r.skipped)
@@ -122,7 +145,7 @@ def main() -> int:
     )
 
     print("Done.")
-    return 0
+    return 0 if failures == 0 and errors == 0 else 1
 
 
 if __name__ == "__main__":

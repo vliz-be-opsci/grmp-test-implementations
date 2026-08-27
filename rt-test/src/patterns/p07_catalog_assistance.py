@@ -158,4 +158,49 @@ class CatalogAssistancePattern(RTPattern):
                 )
             )
 
+            # 3. Sub-sitemap expectations (rel="self" to API endpoint and rel="api-catalog" to root catalog)
+            if ep_spec["sub_sitemap"]:
+                sub_sitemap_url = ep_spec["sub_sitemap"]
+                sub_sitemap_expectations = [
+                    RelationExpectation(
+                        rel="self",
+                        target=ep_url,
+                        exists=True,
+                    ),
+                    RelationExpectation(
+                        rel="api-catalog",
+                        target=api_catalog_uri,
+                        exists=True,
+                    ),
+                ]
+                test_cases.append(
+                    self.create_test_case(
+                        name_suffix=f"API Sub-Sitemap [{sub_sitemap_url}] Self & Catalog Links",
+                        target_urls=[sub_sitemap_url],
+                        relations=sub_sitemap_expectations,
+                    )
+                )
+
+        # 4. Granular resources expectations (rel="collection" back to API endpoint)
+        raw_resources = self.get_role_list("resources")
+        if raw_resources and endpoint_specs:
+            primary_ep = endpoint_specs[0]["uri"]
+            for r_idx, res in enumerate(raw_resources, start=1):
+                r_url = res if isinstance(res, str) else res.get("uri", res.get("href"))
+                if r_url:
+                    res_expectations = [
+                        RelationExpectation(
+                            rel="collection",
+                            target=primary_ep,
+                            exists=True,
+                        )
+                    ]
+                    test_cases.append(
+                        self.create_test_case(
+                            name_suffix=f"Sub-Resource #{r_idx} [{r_url}] Collection Uplink",
+                            target_urls=[r_url],
+                            relations=res_expectations,
+                        )
+                    )
+
         return test_cases

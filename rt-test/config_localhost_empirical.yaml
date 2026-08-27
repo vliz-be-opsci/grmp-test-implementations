@@ -1,0 +1,187 @@
+title: "Empirical Radical Transparency Test Suite for Localhost:8080"
+description: "Comprehensive empirical audit comparing live localhost:8080 resources against Radical Transparency Patterns PT-01 through PT-08."
+
+options:
+  timeout: 10
+  verify_ssl: false
+  max_depth: 3
+
+patterns:
+  # ============================================================================
+  # PT-01: Profile Conformity Declaration
+  # ============================================================================
+  - name: "[PT-01] ARMS-MBON Genomic Dataset Profile Conformity"
+    type: "PT-01"
+    uris:
+      resource: "http://localhost:8080/id/dataset/arms-mbon"
+      profile: "http://localhost:8080/id/profile/marine-genomic-dataset-profile"
+      profile_description: "http://localhost:8080/id/profile/marine-genomic-dataset-profile.ttl"
+      profile_type: "http://www.w3.org/ns/dx/prof/Profile"
+
+  - name: "[PT-01] North Sea Sensors Profile Conformity"
+    type: "PT-01"
+    uris:
+      resource: "http://localhost:8080/id/dataset/north-sea-sensors"
+      profile: "http://localhost:8080/id/profile/marine-buoy-telemetry-profile"
+      profile_description: "http://localhost:8080/id/profile/marine-buoy-telemetry-profile.ttl"
+      profile_type: "http://www.w3.org/ns/dx/prof/Profile"
+
+  # ============================================================================
+  # PT-02: Profile Composition
+  # ============================================================================
+  - name: "[PT-02] Marine Ecological Baseline Composite Profile"
+    type: "PT-02"
+    uris:
+      resource: "http://localhost:8080/id/dataset/arms-2018"
+      composite_profile: "http://localhost:8080/id/profile/marine-ecological-baseline-profile"
+      member_profiles:
+        - "http://localhost:8080/id/profile/schema-dataset-profile"
+        - "http://localhost:8080/id/profile/dcat3-dataset-profile"
+        - "http://localhost:8080/id/profile/darwin-core-occurrence-profile"
+      check_composite: true
+
+  # ============================================================================
+  # PT-03: Content Negotiation Menu & Variant Identity Restoration
+  # ============================================================================
+  - name: "[PT-03] ARMS-MBON Dataset Conneg Menu"
+    type: "PT-03"
+    uris:
+      concept: "http://localhost:8080/id/dataset/arms-mbon"
+      variant_menu: "http://localhost:8080/id/dataset/arms-mbon.linkset.json"
+      variants:
+        - uri: "http://localhost:8080/id/dataset/arms-mbon.ttl"
+          type: "text/turtle"
+        - uri: "http://localhost:8080/id/dataset/arms-mbon.jsonld"
+          type: "application/ld+json"
+        - uri: "http://localhost:8080/id/dataset/arms-mbon.html"
+          type: "text/html"
+        - uri: "http://localhost:8080/id/dataset/arms-mbon.rdf"
+          type: "application/rdf+xml"
+      check_variants: true
+
+  - name: "[PT-03] VLIZ Institute Entity Conneg Menu"
+    type: "PT-03"
+    uris:
+      concept: "http://localhost:8080/id/institute/vliz"
+      variant_menu: "http://localhost:8080/id/institute/vliz.linkset.json"
+      variants:
+        - uri: "http://localhost:8080/id/institute/vliz.ttl"
+          type: "text/turtle"
+        - uri: "http://localhost:8080/id/institute/vliz.jsonld"
+          type: "application/ld+json"
+        - uri: "http://localhost:8080/id/institute/vliz.html"
+          type: "text/html"
+        - uri: "http://localhost:8080/id/institute/vliz.rdf"
+          type: "application/rdf+xml"
+      check_variants: true
+
+  - name: "[PT-03] Maregraph Project Conneg Menu"
+    type: "PT-03"
+    uris:
+      concept: "http://localhost:8080/id/project/maregraph"
+      variant_menu: "http://localhost:8080/id/project/maregraph.linkset.json"
+      variants:
+        - uri: "http://localhost:8080/id/project/maregraph.ttl"
+          type: "text/turtle"
+        - uri: "http://localhost:8080/id/project/maregraph.jsonld"
+          type: "application/ld+json"
+        - uri: "http://localhost:8080/id/project/maregraph.html"
+          type: "text/html"
+      check_variants: true
+
+  # ============================================================================
+  # PT-04: No Landing Page Solution (Direct Data Payload Citation & Metadata)
+  # ============================================================================
+  - name: "[PT-04] ARMS-MBON 18S Direct CSV Payload Citation"
+    type: "PT-04"
+    uris:
+      pid: "http://localhost:8080/doi/10.14284/578"
+      content: "http://localhost:8080/data/arms-mbon-18s.csv"
+      resource: "http://localhost:8080/id/dataset/arms-mbon"
+      descriptions:
+        - uri: "http://localhost:8080/id/dataset/arms-mbon.ttl"
+          type: "text/turtle"
+        - uri: "http://localhost:8080/id/dataset/arms-mbon.html"
+          type: "text/html"
+      check_descriptions: true
+
+  - name: "[PT-04] ARMS-2018 Direct CSV Payload Citation"
+    type: "PT-04"
+    uris:
+      pid: "http://localhost:8080/doi/10.14284/412"
+      content: "http://localhost:8080/data/arms-2018-samples.csv"
+      resource: "http://localhost:8080/id/dataset/arms-2018"
+      descriptions:
+        - uri: "http://localhost:8080/id/dataset/arms-2018.ttl"
+          type: "text/turtle"
+        - uri: "http://localhost:8080/id/dataset/arms-2018.html"
+          type: "text/html"
+      check_descriptions: true
+
+  - name: "[PT-04] RO-Crate Paper Direct PDF Payload Citation"
+    type: "PT-04"
+    uris:
+      pid: "http://localhost:8080/doi/10.3897/biss.6.94630"
+      content: "http://localhost:8080/data/ro-crate-paper.pdf"
+      resource: "http://localhost:8080/id/publication/ro-crate-paper"
+      descriptions:
+        - uri: "http://localhost:8080/id/publication/ro-crate-paper.ttl"
+          type: "text/turtle"
+        - uri: "http://localhost:8080/id/publication/ro-crate-paper.html"
+          type: "text/html"
+      check_descriptions: true
+
+  # ============================================================================
+  # PT-05: Subsetting API & Dynamic Services
+  # ============================================================================
+  - name: "[PT-05] MarineInfo Observation Service"
+    type: "PT-05"
+    uris:
+      dataset: "http://localhost:8080/id/dataset/arms-mbon"
+      base_api: "http://localhost:8080/api/observations/v1"
+      api_catalog: "http://localhost:8080/.well-known/api-catalog"
+      service_desc: "http://localhost:8080/api/openapi.json"
+      service_doc: "http://localhost:8080/api/docs/"
+      service_meta: "http://localhost:8080/id/service/marineinfo-api.ttl"
+
+  # ============================================================================
+  # PT-06: Hostwide Discovery
+  # ============================================================================
+  - name: "[PT-06] Hostwide Sitemaps & Robots Discovery"
+    type: "PT-06"
+    uris:
+      host: "http://localhost:8080"
+      robots_txt: "http://localhost:8080/robots.txt"
+      sitemap: "http://localhost:8080/sitemap.xml"
+      resources:
+        - "http://localhost:8080/id/dataset/arms-mbon"
+        - "http://localhost:8080/id/dataset/arms-2018"
+        - "http://localhost:8080/id/dataset/eurobis-occurrences"
+        - "http://localhost:8080/id/dataset/north-sea-sensors"
+        - "http://localhost:8080/id/institute/vliz"
+
+  # ============================================================================
+  # PT-07: Catalog Assistance & Feed Discovery
+  # ============================================================================
+  - name: "[PT-07] Hostwide API Catalog & Feeds"
+    type: "PT-07"
+    uris:
+      api_catalog: "http://localhost:8080/.well-known/api-catalog"
+      api_catalog_sitemap: "http://localhost:8080/sitemap-catalog.xml"
+      api_endpoints:
+        - uri: "http://localhost:8080/api/observations/v1"
+          sub_sitemap: "http://localhost:8080/sitemap-datasets.xml"
+
+  # ============================================================================
+  # PT-08: Large Linksets Split-Up
+  # ============================================================================
+  - name: "[PT-08] ARMS-MBON Hierarchical Linkset Decomposition"
+    type: "PT-08"
+    uris:
+      resource: "http://localhost:8080/id/dataset/arms-mbon"
+      master_linkset: "http://localhost:8080/id/dataset/arms-mbon.linkset.json"
+      child_linksets:
+        - "http://localhost:8080/id/dataset/arms-mbon.conneg.linkset.json"
+        - "http://localhost:8080/id/dataset/arms-mbon.profiles.linkset.json"
+        - "http://localhost:8080/id/dataset/arms-mbon.provenance.linkset.json"
+      check_children: true

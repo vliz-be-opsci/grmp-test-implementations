@@ -31,7 +31,7 @@ def parse_robots_txt(content: str | bytes, robots_url: str = "") -> Tuple[LinkSe
             sitemaps.append(resolved)
             linkset.add(
                 WebLink(
-                    anchor=robots_url,
+                    anchor=robots_url or resolved or "unknown",
                     href=resolved,
                     rel="item",
                     source="robots_txt",

@@ -42,7 +42,7 @@ def parse_html_links(content: str | bytes, base_url: str = "") -> LinkSet:
         for rel in rels:
             linkset.add(
                 WebLink(
-                    anchor=base_url,
+                    anchor=base_url or resolved_href or "unknown",
                     href=resolved_href,
                     rel=rel,
                     media_type=attrs.get("type"),

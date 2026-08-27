@@ -14,6 +14,8 @@ class RelationExpectation(BaseModel):
     rel: str
     target: Optional[str] = None
     target_pattern: Optional[str] = None
+    anchor: Optional[str] = None
+    anchor_pattern: Optional[str] = None
     type: Optional[str] = None
     profile: Optional[str] = None
     min_count: Optional[int] = None
@@ -23,7 +25,12 @@ class RelationExpectation(BaseModel):
 
     def description(self) -> str:
         """Human-readable description of this expectation."""
-        parts = [f"rel={self.rel}"]
+        parts = []
+        if self.anchor:
+            parts.append(f"anchor={self.anchor}")
+        if self.anchor_pattern:
+            parts.append(f"anchor_pattern={self.anchor_pattern}")
+        parts.append(f"rel={self.rel}")
         if self.target:
             parts.append(f"target={self.target}")
         if self.target_pattern:
@@ -105,6 +112,9 @@ class TestCaseConfig(BaseModel):
     targets: TargetConfig = Field(default_factory=TargetConfig)
     expand_linksets: bool = True
     expect: ExpectationConfig = Field(default_factory=ExpectationConfig)
+    pattern_id: Optional[str] = None
+    pattern_name: Optional[str] = None
+    pattern_roles: Dict[str, Any] = Field(default_factory=dict)
 
 
 class TestSuiteConfig(BaseModel):

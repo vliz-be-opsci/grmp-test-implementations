@@ -30,6 +30,10 @@ class WebLink:
     attributes: Dict[str, Any] = field(default_factory=dict)
     source: str = "unknown"
 
+    def __post_init__(self) -> None:
+        if not self.anchor:
+            self.anchor = self.href or "unknown"
+
     def resolved_href(self, base_url: Optional[str] = None) -> str:
         """Return target URL resolved against base_url or anchor."""
         base = base_url or self.anchor
@@ -51,6 +55,18 @@ class WebLink:
         target_obj = URIRef(self.resolved_href())
         return (subject, predicate, target_obj)
 
+    def display_repr(self) -> str:
+        """Return explicit diagnostic representation with anchor, rel, and target."""
+        extras = []
+        if self.media_type:
+            extras.append(f'type="{self.media_type}"')
+        if self.profile:
+            extras.append(f'profile="{self.profile}"')
+        if self.source and self.source != "unknown":
+            extras.append(f'source="{self.source}"')
+        extra_str = f" ({', '.join(extras)})" if extras else ""
+        return f'anchor="{self.anchor}" -> rel="{self.rel}" -> href="{self.href}"{extra_str}'
+
     def matches(
         self,
         rel: Optional[str] = None,
@@ -58,8 +74,18 @@ class WebLink:
         target_pattern: Optional[str] = None,
         media_type: Optional[str] = None,
         profile: Optional[str] = None,
+        anchor: Optional[str] = None,
+        anchor_pattern: Optional[str] = None,
     ) -> bool:
         """Check if this link matches the given filter criteria."""
+        if anchor is not None and self.anchor != anchor:
+            return False
+
+        if anchor_pattern is not None:
+            a_pat = re.compile(anchor_pattern)
+            if not a_pat.search(self.anchor):
+                return False
+
         if rel is not None:
             # Case-insensitive check on relation name or URI
             if self.rel.lower() != rel.strip().lower() and self.predicate_uri().lower() != rel.strip().lower():
@@ -137,6 +163,8 @@ class LinkSet:
                 target_pattern=target_pattern,
                 media_type=media_type,
                 profile=profile,
+                anchor=anchor,
+                anchor_pattern=anchor_pattern,
             ):
                 results.append(link)
         return results
