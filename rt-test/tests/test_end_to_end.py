@@ -146,6 +146,18 @@ def test_example_config_yaml_file_loading():
     assert any("localhost:8080" in url for test in suite_config.tests for url in test.targets.urls)
 
 
+def test_example_config_patterns_yaml_file_loading():
+    """Verify example_config_patterns.yaml is valid, parsable, and resolves all 8 patterns."""
+    config_path = os.path.join(os.path.dirname(__file__), "..", "example_config_patterns.yaml")
+    assert os.path.isfile(config_path), f"Config file not found at {config_path}"
+
+    suite_config = load_config_from_file(config_path)
+    assert len(suite_config.patterns) >= 8
+    resolved_cases = suite_config.resolve_all_tests()
+    assert len(resolved_cases) >= 20
+
+
+
 def test_example_config_against_localhost_8080_if_live():
     """If localhost:8080 is reachable (e.g. running reference container), verify all assertions pass."""
     try:

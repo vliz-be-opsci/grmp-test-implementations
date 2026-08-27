@@ -93,8 +93,9 @@ def main() -> int:
         report_dir = "/reports" if os.path.isdir("/reports") or not os.path.exists("./reports") else "./reports"
         report_path = f"{report_dir}/{suite_name}_report.xml"
 
+    resolved_cases = suite_config.resolve_all_tests()
     print(f"Starting RT Test Suite: {suite_config.name}")
-    print(f"Executing {len(suite_config.tests)} test case definitions...")
+    print(f"Executing {len(resolved_cases)} test case definitions...")
 
     runner = SuiteRunner()
     results = runner.run_suite(suite_config)

@@ -107,9 +107,9 @@ class SuiteRunner:
         client: Optional[httpx.Client] = None,
         available_urls: Optional[List[str]] = None,
     ) -> List[AssertionResult]:
-        """Run all test cases in the test suite."""
+        """Run all test cases in the test suite, including resolved pattern test cases."""
         all_results: List[AssertionResult] = []
-        for test_config in suite_config.tests:
+        for test_config in suite_config.resolve_all_tests():
             case_results = self.run_test_case(
                 test_config,
                 client=client,
@@ -117,3 +117,4 @@ class SuiteRunner:
             )
             all_results.extend(case_results)
         return all_results
+

@@ -7,11 +7,12 @@ from __future__ import annotations
 import ast
 import os
 import sys
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import yaml
 
 from .models import (
     ExpectationConfig,
+    PatternTestConfig,
     RelationExpectation,
     TargetConfig,
     TestCaseConfig,
@@ -19,12 +20,40 @@ from .models import (
 )
 
 
+def _process_raw_config(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Preprocess dictionary to handle pattern tests specified inside 'tests' or 'patterns'."""
+    raw_tests = data.get("tests", [])
+    raw_patterns = data.get("patterns", [])
+
+    processed_tests: List[Any] = []
+    processed_patterns: List[Any] = list(raw_patterns)
+
+    for item in raw_tests:
+        if isinstance(item, dict):
+            # Check if this item is a pattern definition (has pattern/type and uris/roles, or no targets)
+            has_pattern_key = bool(item.get("pattern") or item.get("type"))
+            has_role_key = bool(item.get("uris") or item.get("roles"))
+            is_pattern = has_pattern_key and (has_role_key or "targets" not in item)
+
+            if is_pattern:
+                processed_patterns.append(item)
+            else:
+                processed_tests.append(item)
+        else:
+            processed_tests.append(item)
+
+    data["tests"] = processed_tests
+    data["patterns"] = processed_patterns
+    return data
+
+
 def load_config_from_yaml(yaml_str: str) -> TestSuiteConfig:
     """Parse YAML string into a TestSuiteConfig instance."""
     data = yaml.safe_load(yaml_str)
     if not isinstance(data, dict):
         raise ValueError("Root of test configuration YAML must be a mapping/dictionary")
-    return TestSuiteConfig.model_validate(data)
+    processed = _process_raw_config(data)
+    return TestSuiteConfig.model_validate(processed)
 
 
 def load_config_from_file(file_path: str) -> TestSuiteConfig:
