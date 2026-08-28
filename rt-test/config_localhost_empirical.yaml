@@ -170,7 +170,6 @@ patterns:
       api_catalog_sitemap: "http://localhost:8080/sitemap-catalog.xml"
       api_endpoints:
         - uri: "http://localhost:8080/api/observations/v1"
-          sub_sitemap: "http://localhost:8080/sitemap-datasets.xml"
 
   # ============================================================================
   # PT-08: Large Linksets Split-Up
