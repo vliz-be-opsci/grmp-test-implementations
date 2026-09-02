@@ -10,6 +10,8 @@ services:
     environment:
       - TS_NAME=localtestrun
       - TEST_CONFIG_PATH=/app/config.yaml
+      - PYTHONUNBUFFERED=1
+    tty: true
     working_dir: /app
     networks:
       - test-network

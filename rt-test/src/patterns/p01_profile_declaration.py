@@ -53,9 +53,15 @@ class ProfileDeclarationPattern(RTPattern):
             aliases=["description", "describedby", "profile_doc"],
         ),
         PatternRoleDefinition(
+            name="profile_alternate",
+            required=False,
+            description="Alternate representation URI(s) for the profile (e.g. .ttl, .jsonld, .html)",
+            aliases=["alternate", "profile_alternates", "alternates"],
+        ),
+        PatternRoleDefinition(
             name="profile_type",
             required=False,
-            description="Profile type standard URI (e.g., RFC 6906)",
+            description="Profile type standard URI (e.g., RFC 6906 or prof:Profile)",
             aliases=["type", "standard"],
         ),
     ]
@@ -68,6 +74,7 @@ class ProfileDeclarationPattern(RTPattern):
         profile_uri = self.get_role_uri("profile")
         profile_desc = self.get_role_uri("profile_description")
         profile_type = self.get_role_uri("profile_type")
+        profile_alts = self.get_role_list("profile_alternate")
 
         test_cases: List[TestCaseConfig] = []
 
@@ -87,8 +94,8 @@ class ProfileDeclarationPattern(RTPattern):
             )
         )
 
-        # 2. Profile metadata expectations (if profile_description or profile_type is provided)
-        if profile_desc or profile_type:
+        # 2. Profile metadata expectations (if profile_type, profile_description, or profile_alternate is provided)
+        if profile_desc or profile_type or profile_alts:
             profile_expectations: List[RelationExpectation] = []
             if profile_type:
                 profile_expectations.append(
@@ -106,6 +113,16 @@ class ProfileDeclarationPattern(RTPattern):
                         exists=True,
                     )
                 )
+            for alt in profile_alts:
+                alt_uri = alt if isinstance(alt, str) else alt.get("uri", alt.get("href"))
+                if alt_uri:
+                    profile_expectations.append(
+                        RelationExpectation(
+                            rel="alternate",
+                            target=alt_uri,
+                            exists=True,
+                        )
+                    )
             if profile_expectations:
                 test_cases.append(
                     self.create_test_case(

@@ -21,6 +21,82 @@ def _hostname(url: str) -> str:
         return ""
 
 
+def _build_testcase_system_out(res: AssertionResult) -> str:
+    """Build a rich, structured diagnostic system-out for a JUnit XML testcase."""
+    lines = []
+
+    # 1. Status & Pattern / Suite Context
+    status_label = "PASSED" if res.passed and not res.skipped else ("SKIPPED" if res.skipped else "FAILED")
+    lines.append(f"Outcome: {status_label}")
+    if res.pattern_id:
+        p_name = f" ({res.pattern_name})" if res.pattern_name else ""
+        lines.append(f"Pattern: [{res.pattern_id}]{p_name}")
+    if res.suite_name:
+        lines.append(f"Test Definition: {res.suite_name}")
+
+    # 2. Target Harvest Info
+    node = res.harvest_node
+    if node:
+        status_code = f"HTTP {node.status_code}" if node.status_code else "HTTP Error"
+        ct = f" {node.content_type}" if node.content_type else ""
+        dur = f" in {node.duration:.3f}s" if getattr(node, "duration", 0) > 0 else ""
+        lines.append(f"Target URL: {node.uri} ({status_code}{ct}{dur})")
+
+        dir_cnt = len(node.direct_links)
+        exp_cnt = len(node.expanded_links)
+        ls_cnt = len(node.referenced_linksets)
+        link_str = f"{len(node.all_links)} total links ({dir_cnt} direct"
+        if exp_cnt > 0 or ls_cnt > 0:
+            link_str += f", {exp_cnt} expanded via {ls_cnt} linkset(s)"
+        link_str += ")"
+        lines.append(f"Discovered Links: {link_str}")
+    elif res.target_url:
+        lines.append(f"Target URL: {res.target_url}")
+
+    # 3. Evaluated Expectation
+    if res.expectation:
+        lines.append(f"Evaluated Expectation: {res.expectation.description()}")
+
+    # 4. Matched Links & Carrier Sources
+    if res.matched_links:
+        sources = []
+        seen = set()
+        for link in res.matched_links:
+            src = getattr(link, "source", None)
+            if src and src not in seen:
+                seen.add(src)
+                sources.append(src)
+        source_badge = f" [source: {', '.join(sources)}]" if sources else ""
+        lines.append(f"Matched Relations Count: {len(res.matched_links)}{source_badge}")
+        lines.append("Matched:")
+        for idx, ml in enumerate(res.matched_links, 1):
+            lines.append(f"  [{idx}] {ml.display_repr()}")
+    elif res.passed:
+        lines.append("Matched: 0 relations (as expected)")
+    else:
+        lines.append("Matched Relations Count: 0")
+
+    # 5. Generic stdout if expectation wasn't set (e.g. SPARQL / Harvest)
+    if not res.expectation and res.stdout and res.stdout not in "\n".join(lines):
+        lines.append(res.stdout)
+
+    # 6. Failure / Error details
+    if not res.passed:
+        if res.failure_message:
+            lines.append(f"Failure Reason: {res.failure_message}")
+        if res.failure_text and res.failure_text != res.failure_message:
+            lines.append(res.failure_text)
+        if res.error:
+            lines.append(f"Error: {res.error}")
+
+    # 7. ASCII Diagram if present
+    if res.diagram:
+        lines.append("")
+        lines.append(res.diagram)
+
+    return "\n".join(lines)
+
+
 def generate_junit_xml(
     suite_name: str,
     results: List[AssertionResult],
@@ -80,8 +156,7 @@ def generate_junit_xml(
                 failure.text = res.failure_text or res.failure_message or "Assertion failed"
                 case.result = [failure]
 
-            if res.stdout:
-                case.system_out = res.stdout
+            case.system_out = _build_testcase_system_out(res)
             if res.stderr:
                 case.system_err = res.stderr
 

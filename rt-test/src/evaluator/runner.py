@@ -20,6 +20,11 @@ class SuiteRunner:
 
     def __init__(self, harvester: Optional[CompositeHarvester] = None):
         self.harvester = harvester or CompositeHarvester()
+        self.node_cache: Dict[str, ResourceNode] = {}
+
+    def clear_cache(self) -> None:
+        """Clear the internal harvested resource node cache."""
+        self.node_cache.clear()
 
     def resolve_target_urls(self, test_config: TestCaseConfig, available_urls: Optional[List[str]] = None) -> List[str]:
         """Resolve all distinct target URLs matching explicit urls and pattern filters."""
@@ -57,16 +62,22 @@ class SuiteRunner:
                 )
             ]
 
-        harvested_nodes: dict = {}
+        harvested_nodes: dict = dict(self.node_cache)
         for url in target_urls:
-            start_time = time.time()
-            node = self.harvester.harvest(
-                url,
-                client=client,
-                expand_linksets=test_config.expand_linksets,
-            )
-            duration = time.time() - start_time
-            node.duration = duration
+            if url in self.node_cache:
+                node = self.node_cache[url]
+                duration = getattr(node, "duration", 0.0)
+            else:
+                start_time = time.time()
+                node = self.harvester.harvest(
+                    url,
+                    client=client,
+                    expand_linksets=test_config.expand_linksets,
+                )
+                duration = time.time() - start_time
+                node.duration = duration
+                self.node_cache[url] = node
+
             harvested_nodes[url] = node
 
             has_expectations = bool(test_config.expect.relations or test_config.expect.min_triples is not None or test_config.expect.sparql_ask)
@@ -98,6 +109,27 @@ class SuiteRunner:
             for res in rdf_results:
                 res.duration = duration
                 results.append(res)
+
+        # Ensure all pattern role URIs are harvested so multi-node pattern diagrams render accurately
+        if test_config.pattern_roles:
+            for role_val in test_config.pattern_roles.values():
+                vals = role_val if isinstance(role_val, list) else [role_val]
+                for v in vals:
+                    uri_str = v if isinstance(v, str) else (v.get("uri") or v.get("href") if isinstance(v, dict) else None)
+                    if isinstance(uri_str, str) and uri_str.startswith(("http://", "https://")):
+                        if uri_str not in self.node_cache:
+                            try:
+                                r_node = self.harvester.harvest(
+                                    uri_str,
+                                    client=client,
+                                    expand_linksets=test_config.expand_linksets,
+                                )
+                                r_node.duration = 0.0
+                                self.node_cache[uri_str] = r_node
+                            except Exception:
+                                pass
+                        if uri_str in self.node_cache:
+                            harvested_nodes[uri_str] = self.node_cache[uri_str]
 
         from reporter.diagram import ASCIIDiagramRenderer
 

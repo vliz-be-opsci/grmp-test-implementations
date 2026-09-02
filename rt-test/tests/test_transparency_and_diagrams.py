@@ -218,3 +218,111 @@ def test_concise_stdout_on_passed_test_vs_full_trace_on_failure():
     diag_failed_only = ASCIIDiagramRenderer.render_assertion_result(res_failed, {"https://example.org/dataset/1": node}, include_trace=False)
     assert "DIAGRAM: Failing license test" in diag_failed_only
     assert "HTTP Call Trace & Provenance:" not in diag_failed_only
+
+
+def test_render_pt09_diagram():
+    node_series = ResourceNode(
+        uri="https://example.org/id/dataset/90",
+        status_code=200,
+        direct_links=LinkSet(links=[
+            WebLink(anchor="https://example.org/id/dataset/90", href="https://example.org/id/dataset/90/v2.1", rel="latest-version"),
+            WebLink(anchor="https://example.org/id/dataset/90", href="https://example.org/id/dataset/90/history", rel="version-history"),
+            WebLink(anchor="https://example.org/id/dataset/90", href="https://doi.org/10.14284/90", rel="cite-as"),
+        ]),
+    )
+    res = AssertionResult(
+        case_name="[PT-09] Dataset 90 Release Linking",
+        target_url="https://example.org/id/dataset/90",
+        passed=True,
+        pattern_id="PT-09",
+        pattern_roles={
+            "series": "https://example.org/id/dataset/90",
+            "latest_version": "https://example.org/id/dataset/90/v2.1",
+            "version_history": "https://example.org/id/dataset/90/history",
+            "series_pid": "https://doi.org/10.14284/90",
+            "releases": [
+                {
+                    "uri": "https://example.org/id/dataset/90/v2.1",
+                    "version": "2.1",
+                    "predecessor": "https://example.org/id/dataset/90/v2.0",
+                },
+                {
+                    "uri": "https://example.org/id/dataset/90/v2.0",
+                    "version": "2.0",
+                    "predecessor": "https://example.org/id/dataset/90/v1.0",
+                    "successor": "https://example.org/id/dataset/90/v2.1",
+                },
+            ],
+        },
+    )
+    diag = ASCIIDiagramRenderer.render_assertion_result(res, {"https://example.org/id/dataset/90": node_series}, include_trace=False)
+    assert "Conceptual Series (Latest Identity): https://example.org/id/dataset/90" in diag
+    assert "Latest Authoritative Release: https://example.org/id/dataset/90/v2.1" in diag
+    assert "rel=\"version-history\" ---> https://example.org/id/dataset/90/history" in diag
+    assert "Version Succession Chain (RFC 5829):" in diag
+    assert "[LATEST v2.1]" in diag
+    assert "[v2.0]" in diag
+
+
+def test_console_reporting_grouped_and_flat(capsys):
+    from src.reporter.console import print_flat_results, print_grouped_results
+    node = ResourceNode(uri="https://example.org/dataset/90", status_code=200, content_type="text/turtle", duration=0.012)
+    link = WebLink(anchor="https://example.org/dataset/90", rel="latest-version", href="https://example.org/dataset/90/v2.1", source="http_header")
+    node.direct_links.add(link)
+    node.all_links.add(link)
+
+    res = AssertionResult(
+        case_name="rt_relation [https://example.org/dataset/90] [rel=latest-version target=https://example.org/dataset/90/v2.1]",
+        target_url="https://example.org/dataset/90",
+        passed=True,
+        suite_name="[PT-09] Dataset 90 Release Lifecycle",
+        harvest_node=node,
+        matched_links=[link],
+    )
+
+    print_grouped_results([res], diagram_mode="never")
+    captured = capsys.readouterr().out
+    assert "[PT-09] Dataset 90 Release Lifecycle" in captured
+    assert "Target: https://example.org/dataset/90 (HTTP 200 text/turtle" in captured
+    assert "[✓ PASS]" in captured
+    assert "[source: http_header]" in captured
+
+    print_flat_results([res], diagram_mode="never", detailed=True)
+    captured_flat = capsys.readouterr().out
+    assert "[✓ PASSED]" in captured_flat
+    assert "source: http_header" in captured_flat
+
+
+def test_render_pt01_diagram_with_alternate_and_type():
+    res_node = ResourceNode(uri="https://example.org/dataset/1", status_code=200)
+    res_node.all_links.add(WebLink(anchor="https://example.org/dataset/1", rel="profile", href="https://example.org/profile/p1"))
+
+    prof_node = ResourceNode(uri="https://example.org/profile/p1", status_code=200)
+    prof_node.all_links.add(WebLink(anchor="https://example.org/profile/p1", rel="type", href="http://www.w3.org/ns/dx/prof/Profile"))
+    prof_node.all_links.add(WebLink(anchor="https://example.org/profile/p1", rel="alternate", href="https://example.org/profile/p1.ttl"))
+
+    res = AssertionResult(
+        case_name="rt_relation [https://example.org/dataset/1] [rel=profile]",
+        target_url="https://example.org/dataset/1",
+        passed=True,
+        pattern_id="PT-01",
+        pattern_roles={
+            "resource": "https://example.org/dataset/1",
+            "profile": "https://example.org/profile/p1",
+            "profile_type": "http://www.w3.org/ns/dx/prof/Profile",
+            "profile_alternate": "https://example.org/profile/p1.ttl",
+        },
+    )
+
+    nodes = {
+        "https://example.org/dataset/1": res_node,
+        "https://example.org/profile/p1": prof_node,
+    }
+    diag = ASCIIDiagramRenderer.render_assertion_result(res, nodes)
+    assert "Resource: https://example.org/dataset/1" in diag
+    assert "Profile: https://example.org/profile/p1" in diag
+    assert 'rel="profile"' in diag
+    assert 'rel="type"' in diag
+    assert 'rel="alternate"' in diag
+    assert "https://example.org/profile/p1.ttl" in diag
+    assert "http://www.w3.org/ns/dx/prof/Profile" in diag

@@ -173,11 +173,12 @@ class ASCIIDiagramRenderer:
         prof_uri = roles.get("profile") or "Profile URI"
         desc_uri = roles.get("profile_description")
         type_uri = roles.get("profile_type")
+        alts = roles.get("profile_alternate") or roles.get("profile_alternates") or []
+        if isinstance(alts, str):
+            alts = [alts]
 
         res_node = nodes.get(res_uri)
         prof_passed = False
-        desc_passed = False
-        type_passed = False
 
         if res_node:
             prof_matches = res_node.all_links.find_links(rel="profile", target=prof_uri if prof_uri != "Profile URI" else None)
@@ -186,30 +187,48 @@ class ASCIIDiagramRenderer:
             prof_passed = getattr(result, "passed", False)
 
         prof_node = nodes.get(prof_uri)
-        if prof_node and desc_uri:
-            desc_matches = prof_node.all_links.find_links(rel="describedby", target=desc_uri)
-            desc_passed = len(desc_matches) > 0
-        if prof_node and type_uri:
-            type_matches = prof_node.all_links.find_links(rel="type", target=type_uri)
-            type_passed = len(type_matches) > 0
 
         diagram = []
         diagram.extend(_make_box("Resource", res_uri))
         diagram.extend(_make_down_arrow('rel="profile"', _status_badge(prof_passed)))
         diagram.extend(_make_box("Profile", prof_uri))
 
-        if desc_uri or type_uri:
+        if desc_uri or type_uri or alts:
             diagram.append("        |")
+            if alts:
+                for alt in alts:
+                    alt_uri = alt if isinstance(alt, str) else alt.get("uri", alt.get("href", str(alt)))
+                    alt_passed = False
+                    if prof_node:
+                        alt_matches = prof_node.all_links.find_links(rel="alternate", target=alt_uri)
+                        alt_passed = len(alt_matches) > 0
+                    badge = _status_badge(alt_passed) if prof_node else "[? UNCHECKED]"
+                    a_str = f"        +---> rel=\"alternate\"   -> {alt_uri}"
+                    if len(a_str) > LINE_WIDTH - 15:
+                        a_str = a_str[: LINE_WIDTH - 18] + "..."
+                    diagram.append(f"{a_str:<{LINE_WIDTH - 15}} {badge}")
+
             if desc_uri:
+                desc_passed = False
+                if prof_node:
+                    desc_matches = prof_node.all_links.find_links(rel="describedby", target=desc_uri)
+                    desc_passed = len(desc_matches) > 0
+                badge = _status_badge(desc_passed) if prof_node else "[? UNCHECKED]"
                 d_str = f"        +---> rel=\"describedby\" -> {desc_uri}"
-                if len(d_str) > LINE_WIDTH - 12:
-                    d_str = d_str[: LINE_WIDTH - 15] + "..."
-                diagram.append(f"{d_str:<{LINE_WIDTH - 12}} {_status_badge(desc_passed)}")
+                if len(d_str) > LINE_WIDTH - 15:
+                    d_str = d_str[: LINE_WIDTH - 18] + "..."
+                diagram.append(f"{d_str:<{LINE_WIDTH - 15}} {badge}")
+
             if type_uri:
+                type_passed = False
+                if prof_node:
+                    type_matches = prof_node.all_links.find_links(rel="type", target=type_uri)
+                    type_passed = len(type_matches) > 0
+                badge = _status_badge(type_passed) if prof_node else "[? UNCHECKED]"
                 t_str = f"        +---> rel=\"type\"        -> {type_uri}"
-                if len(t_str) > LINE_WIDTH - 12:
-                    t_str = t_str[: LINE_WIDTH - 15] + "..."
-                diagram.append(f"{t_str:<{LINE_WIDTH - 12}} {_status_badge(type_passed)}")
+                if len(t_str) > LINE_WIDTH - 15:
+                    t_str = t_str[: LINE_WIDTH - 18] + "..."
+                diagram.append(f"{t_str:<{LINE_WIDTH - 15}} {badge}")
 
         return "\n".join(diagram)
 
@@ -540,6 +559,84 @@ class ASCIIDiagramRenderer:
             if len(c_str) > LINE_WIDTH - 12:
                 c_str = c_str[: LINE_WIDTH - 15] + "..."
             diagram.append(f"{c_str:<{LINE_WIDTH - 12}} {_status_badge(c_passed)}")
+
+        return "\n".join(diagram)
+
+    @staticmethod
+    def _render_pt09(roles: Dict[str, Any], result: Any, nodes: Dict[str, ResourceNode]) -> str:
+        series_uri = roles.get("series") or getattr(result, "target_url", "Conceptual Series")
+        latest_uri = roles.get("latest_version") or "Latest Version URI"
+        history_uri = roles.get("version_history")
+        series_pid = roles.get("series_pid")
+        releases = roles.get("releases", [])
+
+        series_node = nodes.get(series_uri)
+        latest_passed = False
+        history_passed = False
+        pid_passed = False
+
+        if series_node:
+            l_matches = series_node.all_links.find_links(rel="latest-version", target=latest_uri if latest_uri != "Latest Version URI" else None)
+            latest_passed = len(l_matches) > 0
+            if history_uri:
+                h_matches = series_node.all_links.find_links(rel="version-history", target=history_uri)
+                history_passed = len(h_matches) > 0
+            if series_pid:
+                p_matches = series_node.all_links.find_links(rel="cite-as", target=series_pid)
+                pid_passed = len(p_matches) > 0
+        else:
+            latest_passed = getattr(result, "passed", False)
+
+        diagram = []
+        diagram.extend(_make_box("Conceptual Series (Latest Identity)", series_uri))
+        if series_pid:
+            diagram.append(f"        | PID: {series_pid} {_status_badge(pid_passed)}")
+
+        diagram.extend(_make_down_arrow('rel="latest-version"', _status_badge(latest_passed)))
+        diagram.extend(_make_box("Latest Authoritative Release", latest_uri))
+
+        if history_uri:
+            diagram.append("        |")
+            diagram.append(f"        +--- rel=\"version-history\" ---> {history_uri} {_status_badge(history_passed)}")
+
+        if releases:
+            diagram.append("        |")
+            diagram.append("        | Version Succession Chain (RFC 5829):")
+            for idx, r in enumerate(releases, 1):
+                r_uri = r.get("uri") if isinstance(r, dict) else str(r)
+                r_ver = r.get("version", f"#{idx}") if isinstance(r, dict) else f"#{idx}"
+                r_pred = r.get("predecessor") if isinstance(r, dict) else None
+                r_succ = r.get("successor") if isinstance(r, dict) else None
+                r_pid = r.get("pid") or r.get("cite_as") if isinstance(r, dict) else None
+
+                r_node = nodes.get(r_uri)
+                pred_passed = False
+                succ_passed = False
+                coll_passed = False
+
+                if r_node:
+                    c_matches = r_node.all_links.find_links(rel="collection", target=series_uri)
+                    coll_passed = len(c_matches) > 0
+                    if r_pred:
+                        p_matches = r_node.all_links.find_links(rel="predecessor-version", target=r_pred)
+                        pred_passed = len(p_matches) > 0
+                    if r_succ:
+                        s_matches = r_node.all_links.find_links(rel="successor-version", target=r_succ)
+                        succ_passed = len(s_matches) > 0
+
+                is_latest = (r_uri == latest_uri)
+                status_parts = [f"collection: {_status_badge(coll_passed)}"]
+                if r_pred:
+                    status_parts.append(f"pred: {_status_badge(pred_passed)}")
+                if r_succ:
+                    status_parts.append(f"succ: {_status_badge(succ_passed)}")
+
+                chain_line = f"        [{'LATEST ' if is_latest else ''}v{r_ver}] {r_uri}"
+                if len(chain_line) > LINE_WIDTH - 30:
+                    chain_line = chain_line[: LINE_WIDTH - 33] + "..."
+                diagram.append(f"{chain_line:<{LINE_WIDTH - 30}} {' '.join(status_parts)}")
+                if r_pid:
+                    diagram.append(f"              PID (cite-as): {r_pid}")
 
         return "\n".join(diagram)
 

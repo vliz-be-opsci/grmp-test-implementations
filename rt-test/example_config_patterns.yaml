@@ -18,8 +18,8 @@ patterns:
     uris:
       resource: "http://localhost:8080/id/dataset/arms-mbon"
       profile: "http://localhost:8080/id/profile/marine-genomic-dataset-profile"
-      profile_description: "http://localhost:8080/id/profile/marine-genomic-dataset-profile.html"
-      profile_type: "https://www.rfc-editor.org/info/rfc6906"
+      profile_alternate: "http://localhost:8080/id/profile/marine-genomic-dataset-profile.ttl"
+      profile_type: "http://www.w3.org/ns/dx/prof/Profile"
 
   - name: "ARMS-2018 Marine Ecological Baseline Profile Conformance (PT-01)"
     type: "PT-01"
@@ -183,4 +183,30 @@ patterns:
         - "http://localhost:8080/id/institute/vliz-profiles.ls.json"
         - "http://localhost:8080/id/institute/vliz-variants.ls.json"
         - "http://localhost:8080/id/institute/vliz-services.ls.json"
+
+  # ---------------------------------------------------------------------------
+  # 9. PT-09: Release Linking & Version Navigation (RT-P09)
+  # ---------------------------------------------------------------------------
+  - name: "MarineInfo Dataset 90 Release Linking Lifecycle (PT-09)"
+    type: "PT-09"
+    uris:
+      series: "http://localhost:8080/id/dataset/dataset-90"
+      series_pid: "http://localhost:8080/doi/10.14284/90"
+      latest_version: "http://localhost:8080/id/dataset/dataset-90/v2.1"
+      version_history: "http://localhost:8080/id/dataset/dataset-90/history"
+      history_profile: "https://www.rfc-editor.org/info/rfc5829"
+      releases:
+        - uri: "http://localhost:8080/id/dataset/dataset-90/v2.1"
+          version: "2.1"
+          predecessor: "http://localhost:8080/id/dataset/dataset-90/v2.0"
+          pid: "http://localhost:8080/doi/10.14284/90.v2.1"
+        - uri: "http://localhost:8080/id/dataset/dataset-90/v2.0"
+          version: "2.0"
+          predecessor: "http://localhost:8080/id/dataset/dataset-90/v1.0"
+          successor: "http://localhost:8080/id/dataset/dataset-90/v2.1"
+          pid: "http://localhost:8080/doi/10.14284/90.v2.0"
+        - uri: "http://localhost:8080/id/dataset/dataset-90/v1.0"
+          version: "1.0"
+          successor: "http://localhost:8080/id/dataset/dataset-90/v2.0"
+          pid: "http://localhost:8080/doi/10.14284/90.v1.0"
 

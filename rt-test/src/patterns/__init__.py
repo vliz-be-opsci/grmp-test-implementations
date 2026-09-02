@@ -14,6 +14,7 @@ from .p05_subsetting_api import SubsettingAPIPattern
 from .p06_hostwide_discovery import HostwideDiscoveryPattern
 from .p07_catalog_assistance import CatalogAssistancePattern
 from .p08_large_linksets import LargeLinksetsPattern
+from .p09_release_links import ReleaseLinksPattern
 
 __all__ = [
     "PatternRoleDefinition",
@@ -29,4 +30,5 @@ __all__ = [
     "HostwideDiscoveryPattern",
     "CatalogAssistancePattern",
     "LargeLinksetsPattern",
+    "ReleaseLinksPattern",
 ]

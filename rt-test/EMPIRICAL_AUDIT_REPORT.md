@@ -1,6 +1,6 @@
 # Radical Transparency (RT) Empirical Conformance Reference Report
 
-This document specifies **every resource, HTTP response header, `curl -I` invocation, RFC 9264 JSON linkset, XML sitemap entry, and link relation** required for **100% of test cases to pass** in the [`config_localhost_empirical.yaml`](./config_localhost_empirical.yaml) test suite across **Radical Transparency Patterns PT-01 through PT-08**.
+This document specifies **every resource, HTTP response header, `curl -I` invocation, RFC 9264 JSON linkset, XML sitemap entry, and link relation** required for **100% of test cases to pass** in the [`config_localhost_empirical.yaml`](./config_localhost_empirical.yaml) test suite across **Radical Transparency Patterns PT-01 through PT-09**.
 
 ---
 
@@ -17,6 +17,7 @@ Every digital asset in the ecosystem fulfills specific roles governed by RFC spe
 | **Service Gateway / Base API** | `/api/observations/v1` | **PT-05**, **PT-07** | `rel="cite-as"` (dataset)<br>`rel="api-catalog"`<br>`rel="service-desc"` (OpenAPI)<br>`rel="service-doc"`<br>`rel="service-meta"` | HTTP `Link` headers, RFC 9727 API Catalog registration |
 | **Discovery Roots & Registries** | `/.well-known/api-catalog`<br>`/robots.txt`<br>`/sitemap.xml`<br>`/sitemap-catalog.xml` | **PT-06**, **PT-07** | `rel="alternate"` (to sitemaps)<br>`rel="item"` (to API endpoints)<br>`rel="self"` | `robots.txt` directives, XML sitemaps, RFC 9727 JSON |
 | **Master & Fragment Linksets** | `/id/dataset/arms-mbon.linkset.json`<br>`/id/dataset/arms-mbon.conneg.linkset.json` | **PT-03**, **PT-08** | `rel="item"` (master $\rightarrow$ children)<br>`rel="collection"` (children $\rightarrow$ master) | RFC 9264 `application/linkset+json` |
+| **Versioned Asset Series & Releases** | `/id/dataset/dataset-90`<br>`/id/dataset/dataset-90/v2.1`<br>`/id/dataset/dataset-90/history` | **PT-09** | `rel="latest-version"`<br>`rel="version-history"`<br>`rel="predecessor-version"`<br>`rel="successor-version"`<br>`rel="collection"`<br>`rel="item"`<br>`rel="cite-as"` | HTTP `Link` headers, RFC 9264 JSON linksets, HTML `<link>` |
 
 ---
 
@@ -172,19 +173,27 @@ Link: <http://localhost:8080/id/dataset/arms-mbon.html>; rel="alternate"; type="
 
 ### 3.3 Profile: `marine-genomic-dataset-profile` (PT-01)
 * **URI:** `http://localhost:8080/id/profile/marine-genomic-dataset-profile`
+* **Conneg Alternates:** `.ttl`, `.jsonld`, `.html`
 
 #### `curl -I` Command:
 ```bash
 curl -I -X GET "http://localhost:8080/id/profile/marine-genomic-dataset-profile"
 ```
 
-#### HTTP Response Headers:
+#### HTTP Response Headers & Linkset Relations:
 ```http
 HTTP/1.1 200 OK
 Content-Type: text/turtle; charset=utf-8
 Link: <http://www.w3.org/ns/dx/prof/Profile>; rel="type"
-Link: <http://localhost:8080/id/profile/marine-genomic-dataset-profile.ttl>; rel="describedby"; type="text/turtle"
+Link: <http://localhost:8080/id/profile/marine-genomic-dataset-profile.linkset.json>; rel="linkset"; type="application/linkset+json"
 ```
+
+In the referenced linkset `marine-genomic-dataset-profile.linkset.json`:
+* `anchor="http://localhost:8080/id/profile/marine-genomic-dataset-profile"`
+  * `rel="type"` -> `http://www.w3.org/ns/dx/prof/Profile`
+  * `rel="alternate"` -> `http://localhost:8080/id/profile/marine-genomic-dataset-profile.ttl` (`text/turtle`)
+  * `rel="alternate"` -> `http://localhost:8080/id/profile/marine-genomic-dataset-profile.jsonld` (`application/ld+json`)
+  * `rel="alternate"` -> `http://localhost:8080/id/profile/marine-genomic-dataset-profile.html` (`text/html`)
 
 ---
 
@@ -325,6 +334,116 @@ Link: <http://localhost:8080/id/project/maregraph.ttl>; rel="alternate"; type="t
 Link: <http://localhost:8080/id/project/maregraph.jsonld>; rel="alternate"; type="application/ld+json"
 Link: <http://localhost:8080/id/project/maregraph.html>; rel="alternate"; type="text/html"
 Link: <http://localhost:8080/id/project/maregraph.linkset.json>; rel="linkset"; type="application/linkset+json"
+```
+
+---
+
+### 3.8 Dataset 90 Versioned Series & Release Lifecycle (PT-09)
+* **Pattern Involved:** **PT-09** (Release Linking)
+* **Specification:** RFC 5829 (*Link Relation Types for Simple Version Navigation between Web Resources*) & RFC 9264 (*Linkset*)
+* **Goal:** Enables machine-actionable lifecycle navigation connecting conceptual dataset series (`/id/dataset/dataset-90`), immutable historical releases (`/v2.1`, `/v2.0`, `/v1.0`), and the complete version archive (`/history`).
+
+#### 3.8.1 Conceptual Dataset Series: `dataset-90`
+* **URI:** `http://localhost:8080/id/dataset/dataset-90`
+* **Behavior:** Returns `303 See Other` to `http://localhost:8080/id/dataset/dataset-90.ttl` with Link header pointing to `dataset-90.linkset.json`.
+
+##### `curl -I` Command:
+```bash
+curl -I "http://localhost:8080/id/dataset/dataset-90"
+```
+
+##### HTTP Response Headers (303 Redirect):
+```http
+HTTP/1.1 303 See Other
+Server: nginx/1.31.4
+Content-Type: text/html
+Location: http://localhost:8080/id/dataset/dataset-90.ttl
+Vary: Accept
+Access-Control-Allow-Origin: *
+Link: <http://localhost:8080/id/dataset/dataset-90.linkset.json>; rel="linkset"; type="application/linkset+json"
+```
+
+##### HTTP Response Headers on Turtle Variant (`/id/dataset/dataset-90.ttl`):
+```http
+HTTP/1.1 200 OK
+Content-Type: application/octet-stream
+Link: <http://localhost:8080/id/dataset/dataset-90>; rel="describes", <http://localhost:8080/doi/10.14284/90>; rel="cite-as", <http://localhost:8080/id/profile/dcat3-dataset-profile>; rel="profile", <https://schema.org/Dataset>; rel="type", <http://localhost:8080/id/dataset/dataset-90/v2.1>; rel="latest-version", <http://localhost:8080/id/dataset/dataset-90/history>; rel="version-history", <http://localhost:8080/id/dataset/dataset-90.linkset.json>; rel="linkset"; type="application/linkset+json"
+```
+
+---
+
+#### 3.8.2 Authoritative Latest Release: `dataset-90/v2.1`
+* **URI:** `http://localhost:8080/id/dataset/dataset-90/v2.1`
+* **Behavior:** Links to conceptual series via `collection`, to history via `version-history`, to ancestor via `predecessor-version`, and to Release DOI via `cite-as`.
+
+##### `curl -I` Command:
+```bash
+curl -I "http://localhost:8080/id/dataset/dataset-90/v2.1"
+```
+
+##### HTTP Response Headers (303 Redirect):
+```http
+HTTP/1.1 303 See Other
+Location: http://localhost:8080/id/dataset/dataset-90/v2.1.ttl
+Link: <http://localhost:8080/id/dataset/dataset-90/v2.1.linkset.json>; rel="linkset"; type="application/linkset+json"
+```
+
+##### HTTP Response Headers on Variant (`/id/dataset/dataset-90/v2.1.ttl`):
+```http
+HTTP/1.1 200 OK
+Link: <http://localhost:8080/id/dataset/dataset-90/v2.1>; rel="describes", <http://localhost:8080/doi/10.14284/90.v2.1>; rel="cite-as", <http://localhost:8080/id/profile/dcat3-dataset-profile>; rel="profile", <https://schema.org/Dataset>; rel="type", <http://localhost:8080/id/dataset/dataset-90>; rel="collection", <http://localhost:8080/id/dataset/dataset-90/history>; rel="version-history", <http://localhost:8080/id/dataset/dataset-90/v2.0>; rel="predecessor-version", <http://localhost:8080/id/dataset/dataset-90/v2.1.linkset.json>; rel="linkset"; type="application/linkset+json"
+```
+
+---
+
+#### 3.8.3 Historical Intermediate Release: `dataset-90/v2.0`
+* **URI:** `http://localhost:8080/id/dataset/dataset-90/v2.0`
+* **Behavior:** Links backward via `predecessor-version` (`/v1.0`), forward via `successor-version` (`/v2.1`), upward via `collection` (`/dataset-90`), and to history via `version-history`.
+
+##### `curl -I` Command:
+```bash
+curl -I "http://localhost:8080/id/dataset/dataset-90/v2.0"
+```
+
+##### HTTP Response Headers on Variant (`/id/dataset/dataset-90/v2.0.ttl`):
+```http
+HTTP/1.1 200 OK
+Link: <http://localhost:8080/id/dataset/dataset-90/v2.0>; rel="describes", <http://localhost:8080/doi/10.14284/90.v2.0>; rel="cite-as", <http://localhost:8080/id/profile/dcat3-dataset-profile>; rel="profile", <https://schema.org/Dataset>; rel="type", <http://localhost:8080/id/dataset/dataset-90>; rel="collection", <http://localhost:8080/id/dataset/dataset-90/history>; rel="version-history", <http://localhost:8080/id/dataset/dataset-90/v1.0>; rel="predecessor-version", <http://localhost:8080/id/dataset/dataset-90/v2.1>; rel="successor-version", <http://localhost:8080/id/dataset/dataset-90/v2.0.linkset.json>; rel="linkset"; type="application/linkset+json"
+```
+
+---
+
+#### 3.8.4 Initial Release: `dataset-90/v1.0`
+* **URI:** `http://localhost:8080/id/dataset/dataset-90/v1.0`
+* **Behavior:** Initial release snapshot linking forward via `successor-version` (`/v2.0`), upward via `collection`, to history via `version-history`, and to Release DOI via `cite-as`.
+
+##### `curl -I` Command:
+```bash
+curl -I "http://localhost:8080/id/dataset/dataset-90/v1.0"
+```
+
+##### HTTP Response Headers on Variant (`/id/dataset/dataset-90/v1.0.ttl`):
+```http
+HTTP/1.1 200 OK
+Link: <http://localhost:8080/id/dataset/dataset-90/v1.0>; rel="describes", <http://localhost:8080/doi/10.14284/90.v1.0>; rel="cite-as", <http://localhost:8080/id/profile/dcat3-dataset-profile>; rel="profile", <https://schema.org/Dataset>; rel="type", <http://localhost:8080/id/dataset/dataset-90>; rel="collection", <http://localhost:8080/id/dataset/dataset-90/history>; rel="version-history", <http://localhost:8080/id/dataset/dataset-90/v2.0>; rel="successor-version", <http://localhost:8080/id/dataset/dataset-90/v1.0.linkset.json>; rel="linkset"; type="application/linkset+json"
+```
+
+---
+
+#### 3.8.5 Version History Archive: `dataset-90/history`
+* **URI:** `http://localhost:8080/id/dataset/dataset-90/history`
+* **Behavior:** Version archive linking upward to `collection` (`/dataset-90`), to its dedicated linkset, and declaring profile conformance to RFC 5829.
+
+##### `curl -I` Command:
+```bash
+curl -I "http://localhost:8080/id/dataset/dataset-90/history.html"
+```
+
+##### HTTP Response Headers:
+```http
+HTTP/1.1 200 OK
+Content-Type: text/html
+Link: <http://localhost:8080/id/dataset/dataset-90/history>; rel="describes", <http://localhost:8080/id/dataset/dataset-90/history.linkset.json>; rel="linkset"; type="application/linkset+json", <http://localhost:8080/id/dataset/dataset-90>; rel="collection"
 ```
 
 ---
@@ -507,18 +626,162 @@ Link: <http://localhost:8080/id/project/maregraph.linkset.json>; rel="linkset"; 
 
 ---
 
+### 4.5 Dataset 90 RFC 9264 Versioned Linksets (PT-09)
+
+#### 4.5.1 Series Linkset: `dataset-90.linkset.json`
+* **URI:** `http://localhost:8080/id/dataset/dataset-90.linkset.json`
+```json
+{
+  "linkset": [
+    {
+      "anchor": "http://localhost:8080/id/dataset/dataset-90",
+      "latest-version": [
+        {"href": "http://localhost:8080/id/dataset/dataset-90/v2.1"}
+      ],
+      "version-history": [
+        {"href": "http://localhost:8080/id/dataset/dataset-90/history"}
+      ],
+      "cite-as": [
+        {"href": "http://localhost:8080/doi/10.14284/90"}
+      ],
+      "profile": [
+        {"href": "http://localhost:8080/id/profile/dcat3-dataset-profile"}
+      ],
+      "alternate": [
+        {"href": "http://localhost:8080/id/dataset/dataset-90.ttl", "type": "text/turtle; charset=utf-8"},
+        {"href": "http://localhost:8080/id/dataset/dataset-90.jsonld", "type": "application/ld+json"},
+        {"href": "http://localhost:8080/id/dataset/dataset-90.html", "type": "text/html; charset=utf-8"},
+        {"href": "http://localhost:8080/id/dataset/dataset-90.rdf", "type": "application/rdf+xml"}
+      ]
+    }
+  ]
+}
+```
+
+#### 4.5.2 Latest Release Linkset: `dataset-90/v2.1.linkset.json`
+* **URI:** `http://localhost:8080/id/dataset/dataset-90/v2.1.linkset.json`
+```json
+{
+  "linkset": [
+    {
+      "anchor": "http://localhost:8080/id/dataset/dataset-90/v2.1",
+      "collection": [
+        {"href": "http://localhost:8080/id/dataset/dataset-90"}
+      ],
+      "version-history": [
+        {"href": "http://localhost:8080/id/dataset/dataset-90/history"}
+      ],
+      "predecessor-version": [
+        {"href": "http://localhost:8080/id/dataset/dataset-90/v2.0"}
+      ],
+      "cite-as": [
+        {"href": "http://localhost:8080/doi/10.14284/90.v2.1"}
+      ]
+    }
+  ]
+}
+```
+
+#### 4.5.3 Intermediate Release Linkset: `dataset-90/v2.0.linkset.json`
+* **URI:** `http://localhost:8080/id/dataset/dataset-90/v2.0.linkset.json`
+```json
+{
+  "linkset": [
+    {
+      "anchor": "http://localhost:8080/id/dataset/dataset-90/v2.0",
+      "collection": [
+        {"href": "http://localhost:8080/id/dataset/dataset-90"}
+      ],
+      "version-history": [
+        {"href": "http://localhost:8080/id/dataset/dataset-90/history"}
+      ],
+      "predecessor-version": [
+        {"href": "http://localhost:8080/id/dataset/dataset-90/v1.0"}
+      ],
+      "successor-version": [
+        {"href": "http://localhost:8080/id/dataset/dataset-90/v2.1"}
+      ],
+      "cite-as": [
+        {"href": "http://localhost:8080/doi/10.14284/90.v2.0"}
+      ]
+    }
+  ]
+}
+```
+
+#### 4.5.4 Initial Release Linkset: `dataset-90/v1.0.linkset.json`
+* **URI:** `http://localhost:8080/id/dataset/dataset-90/v1.0.linkset.json`
+```json
+{
+  "linkset": [
+    {
+      "anchor": "http://localhost:8080/id/dataset/dataset-90/v1.0",
+      "collection": [
+        {"href": "http://localhost:8080/id/dataset/dataset-90"}
+      ],
+      "version-history": [
+        {"href": "http://localhost:8080/id/dataset/dataset-90/history"}
+      ],
+      "successor-version": [
+        {"href": "http://localhost:8080/id/dataset/dataset-90/v2.0"}
+      ],
+      "cite-as": [
+        {"href": "http://localhost:8080/doi/10.14284/90.v1.0"}
+      ]
+    }
+  ]
+}
+```
+
+#### 4.5.5 Version History Archive Linkset: `dataset-90/history.linkset.json`
+* **URI:** `http://localhost:8080/id/dataset/dataset-90/history.linkset.json`
+```json
+{
+  "linkset": [
+    {
+      "anchor": "http://localhost:8080/id/dataset/dataset-90/history",
+      "collection": [
+        {"href": "http://localhost:8080/id/dataset/dataset-90"}
+      ],
+      "item": [
+        {
+          "href": "http://localhost:8080/id/dataset/dataset-90/v1.0",
+          "version": "1.0",
+          "release-date": "2023-06-02",
+          "title": "Macrobenthos of the Belgian Part of the North Sea - Release v1.0"
+        },
+        {
+          "href": "http://localhost:8080/id/dataset/dataset-90/v2.0",
+          "version": "2.0",
+          "release-date": "2025-02-06",
+          "title": "Macrobenthos of the Belgian Part of the North Sea - Release v2.0"
+        },
+        {
+          "href": "http://localhost:8080/id/dataset/dataset-90/v2.1",
+          "version": "2.1",
+          "release-date": "2026-08-26",
+          "title": "Macrobenthos of the Belgian Part of the North Sea - Release v2.1"
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
 ## 5. Master Link Relation Cross-Reference Table
 
-This cross-reference table contains every link assertion tested across all 8 patterns:
+This cross-reference table contains every link assertion tested across all 9 patterns:
 
 | Subject / Anchor URI | Predicate / `rel` | Target / Object URI | Media Type / Profile | Tested in Pattern | Carrier Mechanism |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `/id/dataset/arms-mbon` | `profile` | `/id/profile/marine-genomic-dataset-profile` | - | **PT-01** | Header, Linkset, Sitemap |
-| `/id/profile/marine-genomic-dataset-profile` | `type` | `http://www.w3.org/ns/dx/prof/Profile` | - | **PT-01** | Header, RDF |
-| `/id/profile/marine-genomic-dataset-profile` | `describedby` | `/id/profile/marine-genomic-dataset-profile.ttl` | `text/turtle` | **PT-01** | Header |
+| `/id/profile/marine-genomic-dataset-profile` | `type` | `http://www.w3.org/ns/dx/prof/Profile` | - | **PT-01** | Header, Linkset |
+| `/id/profile/marine-genomic-dataset-profile` | `alternate` | `/id/profile/marine-genomic-dataset-profile.ttl` | `text/turtle` | **PT-01** | Linkset |
 | `/id/dataset/north-sea-sensors` | `profile` | `/id/profile/marine-buoy-telemetry-profile` | - | **PT-01** | Header, Sitemap |
-| `/id/profile/marine-buoy-telemetry-profile` | `type` | `http://www.w3.org/ns/dx/prof/Profile` | - | **PT-01** | Header, RDF |
-| `/id/profile/marine-buoy-telemetry-profile` | `describedby` | `/id/profile/marine-buoy-telemetry-profile.ttl` | `text/turtle` | **PT-01** | Header |
+| `/id/profile/marine-buoy-telemetry-profile` | `type` | `http://www.w3.org/ns/dx/prof/Profile` | - | **PT-01** | Header, Linkset |
+| `/id/profile/marine-buoy-telemetry-profile` | `alternate` | `/id/profile/marine-buoy-telemetry-profile.ttl` | `text/turtle` | **PT-01** | Linkset |
 | `/id/dataset/arms-2018` | `profile` | `/id/profile/marine-ecological-baseline-profile` | - | **PT-02** | Header, Sitemap |
 | `/id/profile/marine-ecological-baseline-profile` | `http://schema.org/hasPart` | `/id/profile/schema-dataset-profile` | - | **PT-02** | Header, RDF |
 | `/id/profile/marine-ecological-baseline-profile` | `http://schema.org/hasPart` | `/id/profile/dcat3-dataset-profile` | - | **PT-02** | Header, RDF |
@@ -549,3 +812,24 @@ This cross-reference table contains every link assertion tested across all 8 pat
 | `/.well-known/api-catalog` | `item` | `/api/observations/v1` | - | **PT-07** | Header, Linkset |
 | `/id/dataset/arms-mbon.linkset.json` | `item` | `arms-mbon.{conneg,profiles,provenance}.linkset.json` | `application/linkset+json` | **PT-08** | Linkset |
 | `arms-mbon.{conneg,profiles,provenance}.linkset.json` | `collection` | `/id/dataset/arms-mbon.linkset.json` | `application/linkset+json` | **PT-08** | Linkset |
+| `/id/dataset/dataset-90` | `latest-version` | `/id/dataset/dataset-90/v2.1` | - | **PT-09** | Header, Linkset |
+| `/id/dataset/dataset-90` | `version-history` | `/id/dataset/dataset-90/history` | - | **PT-09** | Header, Linkset |
+| `/id/dataset/dataset-90` | `cite-as` | `/doi/10.14284/90` | - | **PT-09** | Header, Linkset |
+| `/id/dataset/dataset-90/v2.1` | `collection` | `/id/dataset/dataset-90` | - | **PT-09** | Header, Linkset |
+| `/id/dataset/dataset-90/v2.1` | `version-history` | `/id/dataset/dataset-90/history` | - | **PT-09** | Header, Linkset |
+| `/id/dataset/dataset-90/v2.1` | `predecessor-version` | `/id/dataset/dataset-90/v2.0` | - | **PT-09** | Header, Linkset |
+| `/id/dataset/dataset-90/v2.1` | `cite-as` | `/doi/10.14284/90.v2.1` | - | **PT-09** | Header, Linkset |
+| `/id/dataset/dataset-90/v2.0` | `collection` | `/id/dataset/dataset-90` | - | **PT-09** | Header, Linkset |
+| `/id/dataset/dataset-90/v2.0` | `version-history` | `/id/dataset/dataset-90/history` | - | **PT-09** | Header, Linkset |
+| `/id/dataset/dataset-90/v2.0` | `predecessor-version` | `/id/dataset/dataset-90/v1.0` | - | **PT-09** | Header, Linkset |
+| `/id/dataset/dataset-90/v2.0` | `successor-version` | `/id/dataset/dataset-90/v2.1` | - | **PT-09** | Header, Linkset |
+| `/id/dataset/dataset-90/v2.0` | `cite-as` | `/doi/10.14284/90.v2.0` | - | **PT-09** | Header, Linkset |
+| `/id/dataset/dataset-90/v1.0` | `collection` | `/id/dataset/dataset-90` | - | **PT-09** | Header, Linkset |
+| `/id/dataset/dataset-90/v1.0` | `version-history` | `/id/dataset/dataset-90/history` | - | **PT-09** | Header, Linkset |
+| `/id/dataset/dataset-90/v1.0` | `successor-version` | `/id/dataset/dataset-90/v2.0` | - | **PT-09** | Header, Linkset |
+| `/id/dataset/dataset-90/v1.0` | `cite-as` | `/doi/10.14284/90.v1.0` | - | **PT-09** | Header, Linkset |
+| `/id/dataset/dataset-90/history` | `collection` | `/id/dataset/dataset-90` | - | **PT-09** | Header, Linkset |
+| `/id/dataset/dataset-90/history` | `profile` | `https://www.rfc-editor.org/info/rfc5829` | - | **PT-09** | HTML link |
+| `/id/dataset/dataset-90/history` | `item` | `/id/dataset/dataset-90/v2.1` | - | **PT-09** | Linkset |
+| `/id/dataset/dataset-90/history` | `item` | `/id/dataset/dataset-90/v2.0` | - | **PT-09** | Linkset |
+| `/id/dataset/dataset-90/history` | `item` | `/id/dataset/dataset-90/v1.0` | - | **PT-09** | Linkset |

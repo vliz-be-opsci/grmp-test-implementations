@@ -1,5 +1,5 @@
 title: "Empirical Radical Transparency Test Suite for Localhost:8080"
-description: "Comprehensive empirical audit comparing live localhost:8080 resources against Radical Transparency Patterns PT-01 through PT-08."
+description: "Comprehensive empirical audit comparing live localhost:8080 resources against Radical Transparency Patterns PT-01 through PT-09."
 
 options:
   timeout: 10
@@ -15,7 +15,7 @@ patterns:
     uris:
       resource: "http://localhost:8080/id/dataset/arms-mbon"
       profile: "http://localhost:8080/id/profile/marine-genomic-dataset-profile"
-      profile_description: "http://localhost:8080/id/profile/marine-genomic-dataset-profile.ttl"
+      profile_alternate: "http://localhost:8080/id/profile/marine-genomic-dataset-profile.ttl"
       profile_type: "http://www.w3.org/ns/dx/prof/Profile"
 
   - name: "[PT-01] North Sea Sensors Profile Conformity"
@@ -23,7 +23,7 @@ patterns:
     uris:
       resource: "http://localhost:8080/id/dataset/north-sea-sensors"
       profile: "http://localhost:8080/id/profile/marine-buoy-telemetry-profile"
-      profile_description: "http://localhost:8080/id/profile/marine-buoy-telemetry-profile.ttl"
+      profile_alternate: "http://localhost:8080/id/profile/marine-buoy-telemetry-profile.ttl"
       profile_type: "http://www.w3.org/ns/dx/prof/Profile"
 
   # ============================================================================
@@ -184,3 +184,31 @@ patterns:
         - "http://localhost:8080/id/dataset/arms-mbon.profiles.linkset.json"
         - "http://localhost:8080/id/dataset/arms-mbon.provenance.linkset.json"
       check_children: true
+
+  # ============================================================================
+  # PT-09: Release Linking & Version Navigation
+  # ============================================================================
+  - name: "[PT-09] Dataset 90 Versioned Release Lifecycle"
+    type: "PT-09"
+    uris:
+      series: "http://localhost:8080/id/dataset/dataset-90"
+      series_pid: "http://localhost:8080/doi/10.14284/90"
+      latest_version: "http://localhost:8080/id/dataset/dataset-90/v2.1"
+      version_history: "http://localhost:8080/id/dataset/dataset-90/history"
+      history_profile: "https://www.rfc-editor.org/info/rfc5829"
+      releases:
+        - uri: "http://localhost:8080/id/dataset/dataset-90/v2.1"
+          version: "2.1"
+          predecessor: "http://localhost:8080/id/dataset/dataset-90/v2.0"
+          pid: "http://localhost:8080/doi/10.14284/90.v2.1"
+        - uri: "http://localhost:8080/id/dataset/dataset-90/v2.0"
+          version: "2.0"
+          predecessor: "http://localhost:8080/id/dataset/dataset-90/v1.0"
+          successor: "http://localhost:8080/id/dataset/dataset-90/v2.1"
+          pid: "http://localhost:8080/doi/10.14284/90.v2.0"
+        - uri: "http://localhost:8080/id/dataset/dataset-90/v1.0"
+          version: "1.0"
+          successor: "http://localhost:8080/id/dataset/dataset-90/v2.0"
+          pid: "http://localhost:8080/doi/10.14284/90.v1.0"
+      check_history: true
+      check_releases: true

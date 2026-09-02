@@ -129,7 +129,10 @@ class RTPattern(ABC):
         sparql_ask: Optional[List[str]] = None,
     ) -> TestCaseConfig:
         """Convenience helper to construct a resolved TestCaseConfig."""
-        test_name = f"[{self.pattern_id}] {self.name}"
+        if self.name and self.name.startswith(f"[{self.pattern_id}]"):
+            test_name = self.name
+        else:
+            test_name = f"[{self.pattern_id}] {self.name}"
         if name_suffix:
             test_name = f"{test_name} - {name_suffix}"
         return TestCaseConfig(

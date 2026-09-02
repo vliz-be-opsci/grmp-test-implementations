@@ -20,6 +20,7 @@ from patterns import (
     HostwideDiscoveryPattern,
     CatalogAssistancePattern,
     LargeLinksetsPattern,
+    ReleaseLinksPattern,
 )
 
 
@@ -37,6 +38,7 @@ class TestPatternRegistry:
         assert "PT-06" in pattern_ids
         assert "PT-07" in pattern_ids
         assert "PT-08" in pattern_ids
+        assert "PT-09" in pattern_ids
 
     @pytest.mark.parametrize(
         "query,expected_cls",
@@ -62,6 +64,11 @@ class TestPatternRegistry:
             ("RT-P07", CatalogAssistancePattern),
             ("PT-08", LargeLinksetsPattern),
             ("RT-P08", LargeLinksetsPattern),
+            ("PT-09", ReleaseLinksPattern),
+            ("RT-P09", ReleaseLinksPattern),
+            ("release-links", ReleaseLinksPattern),
+            ("release-linking", ReleaseLinksPattern),
+            ("versioning", ReleaseLinksPattern),
         ],
     )
     def test_lookup_by_aliases(self, query, expected_cls):
@@ -116,6 +123,24 @@ class TestPT01ProfileDeclaration:
         rels = {r.rel: r.target for r in cases[1].expect.relations}
         assert rels["type"] == "https://www.rfc-editor.org/info/rfc6906"
         assert rels["describedby"] == "https://example.org/profile/marine.html"
+
+    def test_resolve_with_profile_alternate(self):
+        pattern = PatternRegistry.create(
+            "PT-01",
+            roles={
+                "resource": "https://example.org/dataset/1",
+                "profile": "https://example.org/profile/marine",
+                "profile_alternate": "https://example.org/profile/marine.ttl",
+                "profile_type": "http://www.w3.org/ns/dx/prof/Profile",
+            },
+        )
+        cases = pattern.resolve_test_cases()
+        assert len(cases) == 2
+        assert cases[0].targets.urls == ["https://example.org/dataset/1"]
+        assert cases[1].targets.urls == ["https://example.org/profile/marine"]
+        rels = [(r.rel, r.target) for r in cases[1].expect.relations]
+        assert ("type", "http://www.w3.org/ns/dx/prof/Profile") in rels
+        assert ("alternate", "https://example.org/profile/marine.ttl") in rels
 
 
 class TestPT02ProfileComposition:
@@ -380,6 +405,157 @@ class TestPT08LargeLinksets:
         # Child collection uplinks
         assert cases[2].expect.relations[0].rel == "collection"
         assert cases[2].expect.relations[0].target == "https://example.org/id/inst/36.ls.json"
+
+
+class TestPT09ReleaseLinks:
+    """Tests for PT-09 Release Linking."""
+
+    def test_missing_required_roles_raises(self):
+        pattern = PatternRegistry.create("PT-09", roles={})
+        with pytest.raises(ValueError) as exc_info:
+            pattern.resolve_test_cases()
+        assert "Missing required role 'series'" in str(exc_info.value)
+
+    def test_resolve_pairwise(self):
+        pattern = PatternRegistry.create(
+            "PT-09",
+            roles={
+                "series": "https://example.org/id/dataset/90",
+                "latest_version": "https://example.org/id/dataset/90/v2.1",
+                "version_history": "https://example.org/id/dataset/90/history",
+                "series_pid": "https://doi.org/10.14284/90",
+                "predecessor_version": "https://example.org/id/dataset/90/v2.0",
+                "latest_pid": "https://doi.org/10.14284/90.v2.1",
+            },
+        )
+        cases = pattern.resolve_test_cases()
+        assert len(cases) == 3  # series + latest release + history
+
+        # 1. Series assertions
+        assert cases[0].targets.urls == ["https://example.org/id/dataset/90"]
+        s_rels = {r.rel: r.target for r in cases[0].expect.relations}
+        assert s_rels["latest-version"] == "https://example.org/id/dataset/90/v2.1"
+        assert s_rels["version-history"] == "https://example.org/id/dataset/90/history"
+        assert s_rels["cite-as"] == "https://doi.org/10.14284/90"
+
+        # 2. Latest release assertions
+        assert cases[1].targets.urls == ["https://example.org/id/dataset/90/v2.1"]
+        l_rels = {r.rel: r.target for r in cases[1].expect.relations}
+        assert l_rels["collection"] == "https://example.org/id/dataset/90"
+        assert l_rels["version-history"] == "https://example.org/id/dataset/90/history"
+        assert l_rels["predecessor-version"] == "https://example.org/id/dataset/90/v2.0"
+        assert l_rels["cite-as"] == "https://doi.org/10.14284/90.v2.1"
+
+        # 3. History assertions
+        assert cases[2].targets.urls == ["https://example.org/id/dataset/90/history"]
+        h_rels = [r for r in cases[2].expect.relations]
+        assert any(r.rel == "collection" and r.target == "https://example.org/id/dataset/90" for r in h_rels)
+        assert any(r.rel == "item" and r.target == "https://example.org/id/dataset/90/v2.1" for r in h_rels)
+
+    def test_resolve_full_chain(self):
+        pattern = PatternRegistry.create(
+            "PT-09",
+            roles={
+                "series": "https://example.org/id/dataset/90",
+                "latest_version": "https://example.org/id/dataset/90/v2.1",
+                "version_history": "https://example.org/id/dataset/90/history",
+                "history_profile": "https://www.rfc-editor.org/info/rfc5829",
+                "releases": [
+                    {
+                        "uri": "https://example.org/id/dataset/90/v2.1",
+                        "version": "2.1",
+                        "predecessor": "https://example.org/id/dataset/90/v2.0",
+                        "pid": "https://doi.org/10.14284/90.v2.1",
+                    },
+                    {
+                        "uri": "https://example.org/id/dataset/90/v2.0",
+                        "version": "2.0",
+                        "predecessor": "https://example.org/id/dataset/90/v1.0",
+                        "successor": "https://example.org/id/dataset/90/v2.1",
+                        "pid": "https://doi.org/10.14284/90.v2.0",
+                    },
+                    {
+                        "uri": "https://example.org/id/dataset/90/v1.0",
+                        "version": "1.0",
+                        "successor": "https://example.org/id/dataset/90/v2.0",
+                        "pid": "https://doi.org/10.14284/90.v1.0",
+                    },
+                ],
+            },
+        )
+        cases = pattern.resolve_test_cases()
+        # 1 series + 3 releases + 1 history = 5 test cases
+        assert len(cases) == 5
+
+        # Release v2.0 has both predecessor and successor
+        v20_case = next(c for c in cases if "v2.0" in c.name)
+        v20_rels = {r.rel: r.target for r in v20_case.expect.relations}
+        assert v20_rels["predecessor-version"] == "https://example.org/id/dataset/90/v1.0"
+        assert v20_rels["successor-version"] == "https://example.org/id/dataset/90/v2.1"
+        assert v20_rels["collection"] == "https://example.org/id/dataset/90"
+        assert v20_rels["cite-as"] == "https://doi.org/10.14284/90.v2.0"
+
+        # History has item downlinks to all 3 releases
+        hist_case = next(c for c in cases if "Version History" in c.name)
+        item_targets = [r.target for r in hist_case.expect.relations if r.rel == "item"]
+        assert "https://example.org/id/dataset/90/v2.1" in item_targets
+        assert "https://example.org/id/dataset/90/v2.0" in item_targets
+        assert "https://example.org/id/dataset/90/v1.0" in item_targets
+        assert any(r.rel == "profile" and r.target == "https://www.rfc-editor.org/info/rfc5829" for r in hist_case.expect.relations)
+
+    @respx.mock
+    def test_end_to_end_pt09_execution(self):
+        # 1. Mock series
+        respx.get("https://example.org/id/dataset/90").respond(
+            status_code=200,
+            headers={
+                "Link": (
+                    '<https://example.org/id/dataset/90/v2.1>; rel="latest-version", '
+                    '<https://example.org/id/dataset/90/history>; rel="version-history"'
+                ),
+            },
+        )
+        # 2. Mock v2.1
+        respx.get("https://example.org/id/dataset/90/v2.1").respond(
+            status_code=200,
+            headers={
+                "Link": (
+                    '<https://example.org/id/dataset/90>; rel="collection", '
+                    '<https://example.org/id/dataset/90/history>; rel="version-history", '
+                    '<https://example.org/id/dataset/90/v2.0>; rel="predecessor-version"'
+                ),
+            },
+        )
+        # 3. Mock history
+        respx.get("https://example.org/id/dataset/90/history").respond(
+            status_code=200,
+            headers={
+                "Link": (
+                    '<https://example.org/id/dataset/90>; rel="collection", '
+                    '<https://example.org/id/dataset/90/v2.1>; rel="item"'
+                ),
+            },
+        )
+
+        yaml_content = """
+version: "1.0"
+name: "PT-09 E2E Test"
+patterns:
+  - name: "Dataset 90 Release Linking"
+    type: "PT-09"
+    uris:
+      series: "https://example.org/id/dataset/90"
+      latest_version: "https://example.org/id/dataset/90/v2.1"
+      version_history: "https://example.org/id/dataset/90/history"
+      predecessor_version: "https://example.org/id/dataset/90/v2.0"
+"""
+        suite = load_config_from_yaml(yaml_content)
+        runner = SuiteRunner()
+        with httpx.Client() as client:
+            results = runner.run_suite(suite, client=client)
+
+        assert len(results) >= 3
+        assert all(r.passed for r in results)
 
 
 class TestYamlPatternIntegration:

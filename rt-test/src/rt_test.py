@@ -30,6 +30,7 @@ from config.models import (
     TestSuiteConfig,
 )
 from evaluator.runner import SuiteRunner
+from reporter.console import print_flat_results, print_grouped_results
 from reporter.junit import generate_junit_xml
 
 
@@ -64,6 +65,12 @@ def parse_args() -> argparse.Namespace:
         choices=["always", "on-failure", "never"],
         default=os.environ.get("RT_DIAGRAMS", "on-failure"),
         help="Control ASCII pattern diagram display in console (always, on-failure, never). Default: on-failure",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["grouped", "flat", "compact"],
+        default=os.environ.get("RT_FORMAT", "grouped"),
+        help="Output formatting style: grouped (hierarchical test case view with carrier provenance), flat (detailed 1-liners), compact. Default: grouped",
     )
     return parser.parse_args()
 
@@ -112,16 +119,13 @@ def main() -> int:
     results = runner.run_suite(suite_config)
 
     diagram_mode = args.diagrams.lower()
-    for res in results:
-        status_tag = "✓ PASSED" if res.passed and not res.skipped else ("⚠ SKIPPED" if res.skipped else "✗ FAILED")
-        print(f"[{status_tag}] {res.case_name}")
-
-        should_print_diagram = (
-            diagram_mode == "always"
-            or (diagram_mode == "on-failure" and not res.passed and not res.skipped)
-        )
-        if should_print_diagram and res.diagram:
-            print(f"\n{res.diagram}\n")
+    fmt_mode = args.format.lower()
+    if fmt_mode == "grouped":
+        print_grouped_results(results, diagram_mode=diagram_mode)
+    elif fmt_mode == "flat":
+        print_flat_results(results, diagram_mode=diagram_mode, detailed=True)
+    else:
+        print_flat_results(results, diagram_mode=diagram_mode, detailed=False)
 
     failures = sum(1 for r in results if not r.passed and r.error is None and not r.skipped)
     errors = sum(1 for r in results if r.error is not None)
