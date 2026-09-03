@@ -326,3 +326,251 @@ def test_render_pt01_diagram_with_alternate_and_type():
     assert 'rel="alternate"' in diag
     assert "https://example.org/profile/p1.ttl" in diag
     assert "http://www.w3.org/ns/dx/prof/Profile" in diag
+
+
+def test_render_pt01_diagram_with_profile_description_type():
+    res_node = ResourceNode(uri="https://example.org/dataset/1", status_code=200)
+    res_node.direct_links.add(WebLink(anchor="https://example.org/dataset/1", rel="profile", href="https://example.org/profile/p1"))
+
+    prof_node = ResourceNode(uri="https://example.org/profile/p1", status_code=200)
+    prof_node.direct_links.add(WebLink(anchor="https://example.org/profile/p1", rel="describedby", href="https://example.org/profile/p1.ttl"))
+    prof_node.direct_links.add(WebLink(anchor="https://example.org/profile/p1", rel="type", href="https://www.rfc-editor.org/info/rfc6906"))
+
+    desc_node = ResourceNode(uri="https://example.org/profile/p1.ttl", status_code=200)
+    desc_node.direct_links.add(WebLink(anchor="https://example.org/profile/p1.ttl", rel="type", href="http://www.w3.org/ns/dx/prof/Profile"))
+
+    res = AssertionResult(
+        case_name="rt_relation [https://example.org/dataset/1] [rel=profile]",
+        target_url="https://example.org/dataset/1",
+        passed=True,
+        pattern_id="PT-01",
+        pattern_roles={
+            "resource": "https://example.org/dataset/1",
+            "profile": "https://example.org/profile/p1",
+            "profile_description": "https://example.org/profile/p1.ttl",
+            "profile_description_type": "http://www.w3.org/ns/dx/prof/Profile",
+            "profile_type": "https://www.rfc-editor.org/info/rfc6906",
+        },
+    )
+
+    nodes = {
+        "https://example.org/dataset/1": res_node,
+        "https://example.org/profile/p1": prof_node,
+        "https://example.org/profile/p1.ttl": desc_node,
+    }
+    diag = ASCIIDiagramRenderer.render_assertion_result(res, nodes)
+    assert 'rel="describedby" -> https://example.org/profile/p1.ttl' in diag
+    assert 'rel="type"        -> http://www.w3.org/ns/dx/prof/Profile' in diag
+    assert 'rel="type"        -> https://www.rfc-editor.org/info/rfc6906' in diag
+    assert "[✓ PASS]" in diag
+
+
+
+def test_diagram_renderer_pt06_indented_resources():
+    sm_node = ResourceNode(uri="https://example.org/sitemap.xml", status_code=200)
+    sm_node.all_links.add(WebLink(anchor="https://example.org/sitemap.xml", rel="item", href="https://example.org/id/dataset/arms"))
+    sm_node.all_links.add(WebLink(anchor="https://example.org/id/dataset/arms", rel="linkset", href="https://example.org/id/dataset/arms.linkset.json"))
+    sm_node.all_links.add(WebLink(anchor="https://example.org/id/dataset/arms", rel="alternate", href="https://example.org/id/dataset/arms.ttl"))
+
+    robots_node = ResourceNode(uri="https://example.org/robots.txt", status_code=200)
+    robots_node.all_links.add(WebLink(anchor="https://example.org/robots.txt", rel="item", href="https://example.org/sitemap.xml"))
+
+    res = AssertionResult(
+        case_name="PT-06 Test",
+        target_url="https://example.org/sitemap.xml",
+        passed=True,
+        pattern_id="PT-06",
+        pattern_roles={
+            "host": "https://example.org",
+            "robots_txt": True,
+            "sitemap": "https://example.org/sitemap.xml",
+            "resources": [
+                {
+                    "uri": "https://example.org/id/dataset/arms",
+                    "linkset": "https://example.org/id/dataset/arms.linkset.json",
+                    "alternates": ["https://example.org/id/dataset/arms.ttl"],
+                    "profile": "https://example.org/profile/arms",
+                }
+            ],
+        },
+    )
+
+    nodes = {
+        "https://example.org/robots.txt": robots_node,
+        "https://example.org/sitemap.xml": sm_node,
+    }
+    diag = ASCIIDiagramRenderer.render_assertion_result(res, nodes)
+    assert "Host: https://example.org" in diag
+    assert "robots.txt: https://example.org/robots.txt" in diag
+    assert "sitemap.xml: https://example.org/sitemap.xml" in diag
+    assert "https://example.org/id/dataset/arms" in diag
+    assert "+--- linkset: https://example.org/id/dataset/arms.linkset.json" in diag
+    assert "+--- alternate: https://example.org/id/dataset/arms.ttl" in diag
+    assert "+--- profile: https://example.org/profile/arms" in diag
+
+    # Test robots_txt: False
+    res_no_robots = AssertionResult(
+        case_name="PT-06 Test No Robots",
+        target_url="https://example.org/sitemap.xml",
+        passed=True,
+        pattern_id="PT-06",
+        pattern_roles={
+            "host": "https://example.org",
+            "robots_txt": False,
+            "sitemap": "https://example.org/sitemap.xml",
+            "resources": ["https://example.org/id/dataset/arms"],
+        },
+    )
+    diag_no_robots = ASCIIDiagramRenderer.render_assertion_result(res_no_robots, nodes)
+    assert "v (direct sitemap)" in diag_no_robots
+    assert "robots.txt" not in diag_no_robots
+
+
+def test_diagram_renderer_pt06_alternate_consistency_perspectives():
+    res_uri = "https://example.org/id/dataset/arms-mbon"
+    ls_uri = "https://example.org/id/dataset/arms-mbon.linkset.json"
+    alt_uri = "https://example.org/id/dataset/arms-mbon.ttl"
+    prof_uri = "https://example.org/profile/genomic"
+
+    # 1. Sitemap node
+    sm_node = ResourceNode(uri="https://example.org/sitemap.xml", status_code=200)
+    sm_node.direct_links.add(WebLink(anchor="https://example.org/sitemap.xml", rel="item", href=res_uri))
+    sm_node.direct_links.add(WebLink(anchor=res_uri, rel="linkset", href=ls_uri))
+    sm_node.direct_links.add(WebLink(anchor=res_uri, rel="alternate", href=alt_uri))
+    sm_node.direct_links.add(WebLink(anchor=res_uri, rel="profile", href=prof_uri))
+
+    # 2. Resource node
+    res_node = ResourceNode(uri=res_uri, status_code=200)
+    res_node.direct_links.add(WebLink(anchor=res_uri, rel="linkset", href=ls_uri))
+    res_node.direct_links.add(WebLink(anchor=res_uri, rel="alternate", href=alt_uri))
+    res_node.direct_links.add(WebLink(anchor=res_uri, rel="profile", href=prof_uri))
+
+    # 3. Linkset node
+    ls_node = ResourceNode(uri=ls_uri, status_code=200)
+    ls_node.direct_links.add(WebLink(anchor=res_uri, rel="alternate", href=alt_uri))
+    ls_node.direct_links.add(WebLink(anchor=res_uri, rel="profile", href=prof_uri))
+
+    nodes = {
+        "https://example.org/sitemap.xml": sm_node,
+        res_uri: res_node,
+        ls_uri: ls_node,
+    }
+
+    # Assertion result for alternate consistency test case
+    res = AssertionResult(
+        case_name=f"[PT-06] Sitemaps & Robots - Resource Linkset [{ls_uri}] Alternate Consistency",
+        target_url=ls_uri,
+        passed=True,
+        pattern_id="PT-06",
+        pattern_roles={
+            "host": "https://example.org",
+            "robots_txt": True,
+            "sitemap": "https://example.org/sitemap.xml",
+            "resources": [
+                {
+                    "uri": res_uri,
+                    "linkset": ls_uri,
+                    "alternates": [alt_uri],
+                    "profile": prof_uri,
+                }
+            ],
+        },
+    )
+
+    diag = ASCIIDiagramRenderer.render_assertion_result(res, nodes)
+    assert "Alternate Resources & Consistency Analysis" in diag
+    assert "[1] Sitemap Perspective" in diag
+    assert "[2] Resource Headers Perspective" in diag
+    assert "[3] Linkset Perspective" in diag
+    assert "Consistency Triangulation Matrix:" in diag
+    assert "[✓ IN SYNC]" in diag
+    assert alt_uri in diag
+    assert ls_uri in diag
+    assert prof_uri in diag
+
+
+def test_render_pt07_tripartite_diagram():
+    host_uri = "https://example.org"
+    robots_uri = "https://example.org/robots.txt"
+    sm_index_uri = "https://example.org/sitemap-index.xml"
+    cat_uri = "https://example.org/.well-known/api-catalog"
+    cat_sm_uri = "https://example.org/.well-known/api-catalog/sitemap-index.xml"
+    ep_uri = "https://example.org/api/observations/v1"
+    ep_sm_uri = "https://example.org/api/observations/v1/sitemap.xml"
+    sub_uri = "https://example.org/api/observations/v1/fragments/1"
+
+    # Robots node
+    robots_node = ResourceNode(uri=robots_uri, status_code=200)
+    robots_node.direct_links.add(WebLink(anchor=robots_uri, rel="item", href=sm_index_uri))
+
+    # Sitemap Index node
+    sm_index_node = ResourceNode(uri=sm_index_uri, status_code=200)
+    sm_index_node.direct_links.add(WebLink(anchor=sm_index_uri, rel="item", href=cat_sm_uri))
+    sm_index_node.direct_links.add(WebLink(anchor=sm_index_uri, rel="item", href=ep_sm_uri))
+
+    # Catalog Sitemap node
+    cat_sm_node = ResourceNode(uri=cat_sm_uri, status_code=200)
+    cat_sm_node.direct_links.add(WebLink(anchor=cat_sm_uri, rel="self", href=cat_uri))
+    cat_sm_node.direct_links.add(WebLink(anchor=cat_sm_uri, rel="item", href=ep_uri))
+
+    # Catalog node
+    cat_node = ResourceNode(uri=cat_uri, status_code=200)
+    cat_node.direct_links.add(WebLink(anchor=cat_uri, rel="alternate", href=cat_sm_uri))
+    cat_node.direct_links.add(WebLink(anchor=cat_uri, rel="item", href=ep_uri))
+
+    # Endpoint node
+    ep_node = ResourceNode(uri=ep_uri, status_code=200)
+    ep_node.direct_links.add(WebLink(anchor=ep_uri, rel="api-catalog", href=cat_uri))
+    ep_node.direct_links.add(WebLink(anchor=ep_uri, rel="alternate", href=ep_sm_uri))
+
+    # Endpoint Sitemap node
+    ep_sm_node = ResourceNode(uri=ep_sm_uri, status_code=200)
+    ep_sm_node.direct_links.add(WebLink(anchor=ep_sm_uri, rel="self", href=ep_uri))
+    ep_sm_node.direct_links.add(WebLink(anchor=ep_sm_uri, rel="item", href=sub_uri))
+
+    # Subresource node
+    sub_node = ResourceNode(uri=sub_uri, status_code=200)
+    sub_node.direct_links.add(WebLink(anchor=sub_uri, rel="collection", href=ep_uri))
+
+    nodes = {
+        robots_uri: robots_node,
+        sm_index_uri: sm_index_node,
+        cat_sm_uri: cat_sm_node,
+        cat_uri: cat_node,
+        ep_uri: ep_node,
+        ep_sm_uri: ep_sm_node,
+        sub_uri: sub_node,
+    }
+
+    res = AssertionResult(
+        case_name="[PT-07] Hostwide API Catalog - Listing & Alternates",
+        target_url=cat_uri,
+        passed=True,
+        pattern_id="PT-07",
+        pattern_roles={
+            "host": host_uri,
+            "robots_txt": True,
+            "sitemap_index": sm_index_uri,
+            "api_catalog": cat_uri,
+            "api_catalog_sitemap": cat_sm_uri,
+            "api_endpoints": [
+                {
+                    "uri": ep_uri,
+                    "sitemap": ep_sm_uri,
+                    "subresources": [sub_uri],
+                }
+            ],
+        },
+    )
+
+    diag = ASCIIDiagramRenderer.render_assertion_result(res, nodes)
+    assert "Host: https://example.org" in diag
+    assert "robots.txt: https://example.org/robots.txt" in diag
+    assert "[2] Sitemaps Hierarchy (sitemaps.org)" in diag
+    assert "Catalog Sitemap: https://example.org/.well-known/api-catalog/sitemap-index.xml" in diag
+    assert "API Sitemap:     https://example.org/api/observations/v1/sitemap.xml" in diag
+    assert "[3] API Catalog (RFC 9727)" in diag
+    assert "[1] API Services & Subresources" in diag
+    assert 'rel="collection" uplink' in diag
+    assert "[✓ PASS]" in diag
+

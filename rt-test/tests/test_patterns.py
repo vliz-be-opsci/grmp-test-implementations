@@ -142,6 +142,47 @@ class TestPT01ProfileDeclaration:
         assert ("type", "http://www.w3.org/ns/dx/prof/Profile") in rels
         assert ("alternate", "https://example.org/profile/marine.ttl") in rels
 
+    def test_resolve_with_profile_description_type(self):
+        pattern = PatternRegistry.create(
+            "PT-01",
+            roles={
+                "resource": "https://example.org/dataset/1",
+                "profile": "https://example.org/profile/marine",
+                "profile_description": "https://example.org/profile/marine.ttl",
+                "profile_description_type": "http://www.w3.org/ns/dx/prof/Profile",
+                "profile_type": "https://www.rfc-editor.org/info/rfc6906",
+            },
+        )
+        cases = pattern.resolve_test_cases()
+        assert len(cases) == 3
+        assert cases[0].targets.urls == ["https://example.org/dataset/1"]
+        assert cases[1].targets.urls == ["https://example.org/profile/marine"]
+        assert cases[2].targets.urls == ["https://example.org/profile/marine.ttl"]
+        assert cases[2].name.endswith("Profile Description Conformance")
+        rels = {r.rel: r.target for r in cases[2].expect.relations}
+        assert rels["type"] == "http://www.w3.org/ns/dx/prof/Profile"
+
+    def test_resolve_with_indented_profile_description(self):
+        pattern = PatternRegistry.create(
+            "PT-01",
+            roles={
+                "resource": "https://example.org/dataset/1",
+                "profile": "https://example.org/profile/marine",
+                "profile_description": {
+                    "uri": "https://example.org/profile/marine.ttl",
+                    "type": "http://www.w3.org/ns/dx/prof/Profile",
+                },
+            },
+        )
+        cases = pattern.resolve_test_cases()
+        assert len(cases) == 3
+        assert cases[0].targets.urls == ["https://example.org/dataset/1"]
+        assert cases[1].targets.urls == ["https://example.org/profile/marine"]
+        assert cases[2].targets.urls == ["https://example.org/profile/marine.ttl"]
+        rels = {r.rel: r.target for r in cases[2].expect.relations}
+        assert rels["type"] == "http://www.w3.org/ns/dx/prof/Profile"
+
+
 
 class TestPT02ProfileComposition:
     """Tests for PT-02 Profile Composition."""
@@ -330,19 +371,221 @@ class TestPT06HostwideDiscovery:
         cases = pattern.resolve_test_cases()
         assert len(cases) == 3  # robots + sitemap + sample resources
         assert cases[0].targets.urls == ["https://example.org/robots.txt"]
+        assert cases[0].expect.relations[0].rel == "item"
+        assert cases[0].expect.relations[0].target == "https://example.org/sitemap.xml"
         assert cases[1].targets.urls == ["https://example.org/sitemap.xml"]
         assert set(cases[2].targets.urls) == {"https://example.org/dataset/1", "https://example.org/dataset/2"}
+
+    def test_resolve_robots_txt_false(self):
+        pattern = PatternRegistry.create(
+            "PT-06",
+            roles={
+                "host": "https://example.org",
+                "robots_txt": False,
+                "sitemap": "https://example.org/sitemap.xml",
+                "resources": ["https://example.org/dataset/1"],
+            },
+        )
+        cases = pattern.resolve_test_cases()
+        assert len(cases) == 2  # sitemap + sample resources (robots omitted)
+        assert cases[0].targets.urls == ["https://example.org/sitemap.xml"]
+        assert cases[1].targets.urls == ["https://example.org/dataset/1"]
+
+    def test_resolve_robots_txt_custom_url(self):
+        pattern = PatternRegistry.create(
+            "PT-06",
+            roles={
+                "host": "https://example.org",
+                "robots_txt": "https://custom.example.org/robots-custom.txt",
+                "sitemap": "https://example.org/sitemap.xml",
+            },
+        )
+        cases = pattern.resolve_test_cases()
+        assert cases[0].targets.urls == ["https://custom.example.org/robots-custom.txt"]
+        assert cases[0].expect.relations[0].rel == "item"
+        assert cases[0].expect.relations[0].target == "https://example.org/sitemap.xml"
+
+    def test_resolve_indented_resources(self):
+        pattern = PatternRegistry.create(
+            "PT-06",
+            roles={
+                "host": "https://example.org",
+                "robots_txt": True,
+                "sitemap": "https://example.org/sitemap.xml",
+                "resources": [
+                    {
+                        "uri": "https://example.org/id/dataset/arms-mbon",
+                        "linkset": "https://example.org/id/dataset/arms-mbon.linkset.json",
+                        "alternates": [
+                            "https://example.org/id/dataset/arms-mbon.ttl",
+                            "https://example.org/id/dataset/arms-mbon.jsonld",
+                        ],
+                        "profile": "https://example.org/id/profile/marine-genomic",
+                    },
+                    "https://example.org/id/dataset/simple-sample",
+                ],
+            },
+        )
+        cases = pattern.resolve_test_cases()
+        assert len(cases) == 5
+
+        # 1. Robots.txt
+        assert cases[0].targets.urls == ["https://example.org/robots.txt"]
+        assert cases[0].expect.relations[0].rel == "item"
+        assert cases[0].expect.relations[0].target == "https://example.org/sitemap.xml"
+
+        # 2. Sitemap
+        assert cases[1].targets.urls == ["https://example.org/sitemap.xml"]
+        sm_rels = cases[1].expect.relations
+        items = [r.target for r in sm_rels if r.rel == "item"]
+        assert "https://example.org/id/dataset/arms-mbon" in items
+        assert "https://example.org/id/dataset/simple-sample" in items
+        ls_rels = [r for r in sm_rels if r.rel == "linkset"]
+        assert len(ls_rels) == 1
+        assert ls_rels[0].anchor == "https://example.org/id/dataset/arms-mbon"
+        assert ls_rels[0].target == "https://example.org/id/dataset/arms-mbon.linkset.json"
+        alt_rels = [r for r in sm_rels if r.rel == "alternate"]
+        assert len(alt_rels) == 2
+        assert all(r.anchor == "https://example.org/id/dataset/arms-mbon" for r in alt_rels)
+        prof_rels = [r for r in sm_rels if r.rel == "profile"]
+        assert len(prof_rels) == 1
+        assert prof_rels[0].anchor == "https://example.org/id/dataset/arms-mbon"
+        assert prof_rels[0].target == "https://example.org/id/profile/marine-genomic"
+
+        # 3. Indented Resource Test Case
+        assert cases[2].targets.urls == ["https://example.org/id/dataset/arms-mbon"]
+        res_rels = cases[2].expect.relations
+        assert any(r.rel == "linkset" and r.target == "https://example.org/id/dataset/arms-mbon.linkset.json" for r in res_rels)
+        assert any(r.rel == "alternate" and r.target == "https://example.org/id/dataset/arms-mbon.ttl" for r in res_rels)
+        assert any(r.rel == "alternate" and r.target == "https://example.org/id/dataset/arms-mbon.jsonld" for r in res_rels)
+        assert any(r.rel == "profile" and r.target == "https://example.org/id/profile/marine-genomic" for r in res_rels)
+
+        # 4. Simple Resource Test Case
+        assert cases[3].targets.urls == ["https://example.org/id/dataset/simple-sample"]
+        assert cases[3].expect.relations == []
+
+        # 5. Linkset Consistency Test Case
+        assert cases[4].targets.urls == ["https://example.org/id/dataset/arms-mbon.linkset.json"]
+        assert cases[4].expand_linksets is False
+        ls_case_rels = cases[4].expect.relations
+        assert len(ls_case_rels) == 3  # 2 alternates + 1 profile
+        alt_targets = [r.target for r in ls_case_rels if r.rel == "alternate"]
+        assert "https://example.org/id/dataset/arms-mbon.ttl" in alt_targets
+        assert "https://example.org/id/dataset/arms-mbon.jsonld" in alt_targets
+        assert all(r.anchor == "https://example.org/id/dataset/arms-mbon" for r in ls_case_rels)
 
 
 class TestPT07CatalogAssistance:
     """Tests for PT-07 Catalog Assistance."""
 
-    def test_resolve(self):
+    def test_resolve_full_tripartite(self):
+        pattern = PatternRegistry.create(
+            "PT-07",
+            roles={
+                "host": "https://example.org",
+                "robots_txt": True,
+                "sitemap_index": "https://example.org/sitemap-index.xml",
+                "api_catalog": "https://example.org/.well-known/api-catalog",
+                "api_catalog_sitemap": "https://example.org/.well-known/api-catalog/sitemap-index.xml",
+                "api_endpoints": [
+                    {
+                        "uri": "https://example.org/api/v1",
+                        "sitemap": "https://example.org/api/v1/sitemap.xml",
+                        "profile": "https://w3id.org/ldes/specification",
+                        "subresources": [
+                            "https://example.org/api/v1/fragments/1",
+                            "https://example.org/api/v1/items/42",
+                        ],
+                    }
+                ],
+            },
+        )
+        cases = pattern.resolve_test_cases()
+        # 1. robots directive
+        # 2. sitemap index delegation
+        # 3. catalog sitemap binding
+        # 4. api catalog listing & alternates
+        # 5. api endpoint context
+        # 6. api sub-sitemap self & entries
+        # 7. subresource #1 collection uplink
+        # 8. subresource #2 collection uplink
+        assert len(cases) == 8
+
+        # Case 1: Robots.txt
+        assert cases[0].targets.urls == ["https://example.org/robots.txt"]
+        assert cases[0].expect.relations[0].rel == "item"
+        assert cases[0].expect.relations[0].target == "https://example.org/sitemap-index.xml"
+
+        # Case 2: Sitemap Index Delegation
+        assert cases[1].targets.urls == ["https://example.org/sitemap-index.xml"]
+        index_targets = [r.target for r in cases[1].expect.relations if r.rel == "item"]
+        assert "https://example.org/.well-known/api-catalog/sitemap-index.xml" in index_targets
+        assert "https://example.org/api/v1/sitemap.xml" in index_targets
+
+        # Case 3: Catalog Sitemap
+        assert cases[2].targets.urls == ["https://example.org/.well-known/api-catalog/sitemap-index.xml"]
+        cat_sm_rels = {r.rel: r.target for r in cases[2].expect.relations}
+        assert cat_sm_rels["self"] == "https://example.org/.well-known/api-catalog"
+        assert cat_sm_rels["item"] == "https://example.org/api/v1"
+
+        # Case 4: API Catalog
+        assert cases[3].targets.urls == ["https://example.org/.well-known/api-catalog"]
+        cat_rels = {r.rel: r.target for r in cases[3].expect.relations}
+        assert cat_rels["alternate"] == "https://example.org/.well-known/api-catalog/sitemap-index.xml"
+        assert cat_rels["item"] == "https://example.org/api/v1"
+
+        # Case 5: API Endpoint
+        assert cases[4].targets.urls == ["https://example.org/api/v1"]
+        ep_rels = {r.rel: r.target for r in cases[4].expect.relations}
+        assert ep_rels["api-catalog"] == "https://example.org/.well-known/api-catalog"
+        assert ep_rels["alternate"] == "https://example.org/api/v1/sitemap.xml"
+        assert ep_rels["profile"] == "https://w3id.org/ldes/specification"
+
+        # Case 6: API Sub-Sitemap
+        assert cases[5].targets.urls == ["https://example.org/api/v1/sitemap.xml"]
+        sub_sm_rels = [(r.rel, r.target) for r in cases[5].expect.relations]
+        assert ("self", "https://example.org/api/v1") in sub_sm_rels
+        assert ("item", "https://example.org/api/v1/fragments/1") in sub_sm_rels
+        assert ("item", "https://example.org/api/v1/items/42") in sub_sm_rels
+
+        # Case 7 & 8: Subresources
+        assert cases[6].targets.urls == ["https://example.org/api/v1/fragments/1"]
+        assert cases[6].expect.relations[0].rel == "collection"
+        assert cases[6].expect.relations[0].target == "https://example.org/api/v1"
+
+        assert cases[7].targets.urls == ["https://example.org/api/v1/items/42"]
+        assert cases[7].expect.relations[0].rel == "collection"
+        assert cases[7].expect.relations[0].target == "https://example.org/api/v1"
+
+    def test_resolve_conventional_defaults(self):
         pattern = PatternRegistry.create(
             "PT-07",
             roles={
                 "api_catalog": "https://example.org/.well-known/api-catalog",
-                "api_catalog_sitemap": "https://example.org/.well-known/api-catalog/sitemap.xml",
+                "api_endpoints": ["https://example.org/api/observations"],
+            },
+        )
+        cases = pattern.resolve_test_cases()
+        # Without sitemap_index, robots and index delegation are skipped.
+        # Catalog sitemap defaults to https://example.org/.well-known/api-catalog/sitemap-index.xml
+        # Endpoint sitemap defaults to https://example.org/api/observations/sitemap.xml
+        assert len(cases) == 4  # catalog sitemap + api catalog + api endpoint + sub-sitemap
+
+        # Catalog sitemap binding
+        assert cases[0].targets.urls == ["https://example.org/.well-known/api-catalog/sitemap-index.xml"]
+        # API Catalog
+        assert cases[1].targets.urls == ["https://example.org/.well-known/api-catalog"]
+        # API Endpoint
+        assert cases[2].targets.urls == ["https://example.org/api/observations"]
+        # API Sub-Sitemap
+        assert cases[3].targets.urls == ["https://example.org/api/observations/sitemap.xml"]
+
+    def test_resolve_backward_compatible(self):
+        pattern = PatternRegistry.create(
+            "PT-07",
+            roles={
+                "api_catalog": "https://example.org/.well-known/api-catalog",
+                "api_catalog_sitemap": "https://example.org/sitemap-catalog.xml",
                 "api_endpoints": [
                     {
                         "uri": "https://example.org/feed/dataset",
@@ -354,23 +597,10 @@ class TestPT07CatalogAssistance:
             },
         )
         cases = pattern.resolve_test_cases()
-        assert len(cases) == 4  # catalog + endpoint + sub_sitemap + resource
-
-        catalog_rels = {r.rel: r.target for r in cases[0].expect.relations}
-        assert catalog_rels["item"] == "https://example.org/feed/dataset"
-        assert catalog_rels["alternate"] == "https://example.org/.well-known/api-catalog/sitemap.xml"
-
-        ep_rels = {r.rel: r.target for r in cases[1].expect.relations}
-        assert ep_rels["api-catalog"] == "https://example.org/.well-known/api-catalog"
-        assert ep_rels["profile"] == "https://w3id.org/ldes/specification"
-        assert ep_rels["alternate"] == "https://example.org/sitemaps/dataset-sitemap.xml"
-
-        sub_sm_rels = {r.rel: r.target for r in cases[2].expect.relations}
-        assert sub_sm_rels["self"] == "https://example.org/feed/dataset"
-        assert sub_sm_rels["api-catalog"] == "https://example.org/.well-known/api-catalog"
-
-        res_rels = {r.rel: r.target for r in cases[3].expect.relations}
-        assert res_rels["collection"] == "https://example.org/feed/dataset"
+        assert len(cases) == 5  # cat_sitemap + catalog + endpoint + sub_sitemap + resource
+        assert cases[4].targets.urls == ["https://example.org/id/dataset/1"]
+        assert cases[4].expect.relations[0].rel == "collection"
+        assert cases[4].expect.relations[0].target == "https://example.org/feed/dataset"
 
 
 class TestPT08LargeLinksets:

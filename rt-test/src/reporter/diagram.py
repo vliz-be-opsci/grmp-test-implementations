@@ -7,6 +7,7 @@ and dynamic graphs for raw relation assertions.
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 from models.link import WebLink
 from models.resource import ResourceNode
 
@@ -171,7 +172,16 @@ class ASCIIDiagramRenderer:
     def _render_pt01(roles: Dict[str, Any], result: Any, nodes: Dict[str, ResourceNode]) -> str:
         res_uri = roles.get("resource") or getattr(result, "target_url", "Resource")
         prof_uri = roles.get("profile") or "Profile URI"
-        desc_uri = roles.get("profile_description")
+        desc_raw = roles.get("profile_description") or roles.get("description") or roles.get("profile_doc")
+        desc_uri = None
+        desc_type = roles.get("profile_description_type") or roles.get("description_type") or roles.get("profile_description_profile")
+        if isinstance(desc_raw, str):
+            desc_uri = desc_raw.strip()
+        elif isinstance(desc_raw, dict):
+            desc_uri = (desc_raw.get("uri") or desc_raw.get("href") or desc_raw.get("url") or "").strip()
+            if not desc_type:
+                desc_type = (desc_raw.get("type") or desc_raw.get("profile") or "").strip()
+
         type_uri = roles.get("profile_type")
         alts = roles.get("profile_alternate") or roles.get("profile_alternates") or []
         if isinstance(alts, str):
@@ -206,7 +216,7 @@ class ASCIIDiagramRenderer:
                     a_str = f"        +---> rel=\"alternate\"   -> {alt_uri}"
                     if len(a_str) > LINE_WIDTH - 15:
                         a_str = a_str[: LINE_WIDTH - 18] + "..."
-                    diagram.append(f"{a_str:<{LINE_WIDTH - 15}} {badge}")
+                    diagram.append(f"{a_str:<{LINE_WIDTH - 14}} {badge:>13}")
 
             if desc_uri:
                 desc_passed = False
@@ -217,7 +227,20 @@ class ASCIIDiagramRenderer:
                 d_str = f"        +---> rel=\"describedby\" -> {desc_uri}"
                 if len(d_str) > LINE_WIDTH - 15:
                     d_str = d_str[: LINE_WIDTH - 18] + "..."
-                diagram.append(f"{d_str:<{LINE_WIDTH - 15}} {badge}")
+                diagram.append(f"{d_str:<{LINE_WIDTH - 14}} {badge:>13}")
+
+                if desc_type:
+                    desc_node = nodes.get(desc_uri)
+                    dt_passed = False
+                    if desc_node:
+                        dt_matches = desc_node.all_links.find_links(rel="type", target=desc_type)
+                        dt_passed = len(dt_matches) > 0
+                    badge_dt = _status_badge(dt_passed) if desc_node else "[? UNCHECKED]"
+                    pipe_prefix = "        |     +--- " if type_uri else "              +--- "
+                    dt_str = f"{pipe_prefix}rel=\"type\"        -> {desc_type}"
+                    if len(dt_str) > LINE_WIDTH - 15:
+                        dt_str = dt_str[: LINE_WIDTH - 18] + "..."
+                    diagram.append(f"{dt_str:<{LINE_WIDTH - 14}} {badge_dt:>13}")
 
             if type_uri:
                 type_passed = False
@@ -228,7 +251,7 @@ class ASCIIDiagramRenderer:
                 t_str = f"        +---> rel=\"type\"        -> {type_uri}"
                 if len(t_str) > LINE_WIDTH - 15:
                     t_str = t_str[: LINE_WIDTH - 18] + "..."
-                diagram.append(f"{t_str:<{LINE_WIDTH - 15}} {badge}")
+                diagram.append(f"{t_str:<{LINE_WIDTH - 14}} {badge:>13}")
 
         return "\n".join(diagram)
 
@@ -439,91 +462,689 @@ class ASCIIDiagramRenderer:
 
     @staticmethod
     def _render_pt06(roles: Dict[str, Any], result: Any, nodes: Dict[str, ResourceNode]) -> str:
+        def _clean_list(v: Any) -> List[str]:
+            if v is None:
+                return []
+            if isinstance(v, list):
+                res = []
+                for it in v:
+                    if isinstance(it, str) and it.strip():
+                        res.append(it.strip())
+                    elif isinstance(it, dict):
+                        u = it.get("uri") or it.get("href") or it.get("url")
+                        if u and str(u).strip():
+                            res.append(str(u).strip())
+                return res
+            if isinstance(v, dict):
+                u = v.get("uri") or v.get("href") or v.get("url")
+                return [str(u).strip()] if u and str(u).strip() else []
+            if isinstance(v, str) and v.strip():
+                return [v.strip()]
+            return []
+
         host_uri = roles.get("host") or "Host"
-        robots_uri = roles.get("robots_txt") or f"{host_uri}/robots.txt"
         sitemap_uri = roles.get("sitemap")
         resources = roles.get("resources", [])
 
-        r_node = nodes.get(robots_uri)
-        sm_passed = False
-        if r_node and sitemap_uri:
-            sm_matches = r_node.all_links.find_links(target=sitemap_uri)
-            sm_passed = len(sm_matches) > 0
+        case_name = getattr(result, "case_name", "") or ""
+        target_url = getattr(result, "target_url", "") or ""
+        exp = getattr(result, "expectation", None)
+        exp_anchor = getattr(exp, "anchor", None) if exp else None
+        exp_rel = getattr(exp, "rel", None) if exp else None
+
+        # Parse indented resource specs
+        parsed_specs: List[Dict[str, Any]] = []
+        for r in resources:
+            if isinstance(r, dict):
+                r_uri = (r.get("uri") or r.get("href") or r.get("url") or r.get("loc") or "").strip()
+                if r_uri:
+                    parsed_specs.append({
+                        "uri": r_uri,
+                        "linksets": _clean_list(r.get("linkset") or r.get("linksets")),
+                        "alternates": _clean_list(r.get("alternate") or r.get("alternates")),
+                        "profiles": _clean_list(r.get("profile") or r.get("profiles")),
+                    })
+
+        # Check if this assertion corresponds to an alternate or resource consistency test
+        is_consistency_case = (
+            "Alternate Consistency" in case_name
+            or "Discovery & Links" in case_name
+            or (exp_rel in ("alternate", "linkset", "profile") and bool(exp_anchor))
+        )
+
+        if is_consistency_case and parsed_specs:
+            relevant_spec = None
+            for spec in parsed_specs:
+                r_uri = spec["uri"]
+                if exp_anchor and exp_anchor == r_uri:
+                    relevant_spec = spec
+                    break
+                if target_url == r_uri or target_url in spec["linksets"]:
+                    relevant_spec = spec
+                    break
+                if f"[{r_uri}]" in case_name or any(f"[{ls}]" in case_name for ls in spec["linksets"]):
+                    relevant_spec = spec
+                    break
+
+            if relevant_spec and (relevant_spec["linksets"] or relevant_spec["alternates"] or relevant_spec["profiles"]):
+                return ASCIIDiagramRenderer._render_pt06_alternate_consistency(
+                    res_spec=relevant_spec,
+                    roles=roles,
+                    result=result,
+                    nodes=nodes,
+                )
+
+        robots_raw = roles.get("robots_txt")
+        if robots_raw is None:
+            robots_raw = True
+
+        robots_enabled = True
+        robots_uri = f"{host_uri}/robots.txt"
+
+        if isinstance(robots_raw, bool):
+            robots_enabled = robots_raw
+        elif isinstance(robots_raw, str):
+            val_lower = robots_raw.strip().lower()
+            if val_lower in ("false", "no", "0"):
+                robots_enabled = False
+            elif val_lower not in ("true", "yes", "1"):
+                robots_uri = robots_raw.strip()
 
         diagram = []
         diagram.extend(_make_box("Host", host_uri))
-        diagram.extend([
-            "        |",
-            "        v",
-            f"  [ robots.txt: {robots_uri} ]" if len(robots_uri) <= LINE_WIDTH - 18 else f"  [ robots.txt: {robots_uri[: LINE_WIDTH - 21]}... ]",
-            f"        | Sitemap directive {_status_badge(sm_passed)}",
-            "        v",
-            f"  [ sitemap.xml: {str(sitemap_uri)} ]" if len(str(sitemap_uri)) <= LINE_WIDTH - 19 else f"  [ sitemap.xml: {str(sitemap_uri)[: LINE_WIDTH - 22]}... ]",
-        ])
+
+        if robots_enabled:
+            r_node = nodes.get(robots_uri)
+            sm_passed = False
+            if r_node and sitemap_uri:
+                sm_matches = r_node.all_links.find_links(target=sitemap_uri)
+                sm_passed = len(sm_matches) > 0
+
+            diagram.extend([
+                "        |",
+                "        v",
+                f"  [ robots.txt: {robots_uri} ]" if len(robots_uri) <= LINE_WIDTH - 18 else f"  [ robots.txt: {robots_uri[: LINE_WIDTH - 21]}... ]",
+                f"        | Sitemap directive {_status_badge(sm_passed)}",
+                "        v",
+                f"  [ sitemap.xml: {str(sitemap_uri)} ]" if len(str(sitemap_uri)) <= LINE_WIDTH - 19 else f"  [ sitemap.xml: {str(sitemap_uri)[: LINE_WIDTH - 22]}... ]",
+            ])
+        else:
+            diagram.extend([
+                "        |",
+                "        v (direct sitemap)",
+                f"  [ sitemap.xml: {str(sitemap_uri)} ]" if len(str(sitemap_uri)) <= LINE_WIDTH - 19 else f"  [ sitemap.xml: {str(sitemap_uri)[: LINE_WIDTH - 22]}... ]",
+            ])
 
         if resources:
             diagram.append("        | Resource links:")
             sm_node = nodes.get(sitemap_uri)
+
+            def _clean_list(v: Any) -> List[str]:
+                if v is None:
+                    return []
+                if isinstance(v, list):
+                    res = []
+                    for it in v:
+                        if isinstance(it, str) and it.strip():
+                            res.append(it.strip())
+                        elif isinstance(it, dict):
+                            u = it.get("uri") or it.get("href") or it.get("url")
+                            if u and str(u).strip():
+                                res.append(str(u).strip())
+                    return res
+                if isinstance(v, dict):
+                    u = v.get("uri") or v.get("href") or v.get("url")
+                    return [str(u).strip()] if u and str(u).strip() else []
+                if isinstance(v, str) and v.strip():
+                    return [v.strip()]
+                return []
+
             for res in resources:
-                res_uri = res if isinstance(res, str) else res.get("uri", str(res))
+                if isinstance(res, str):
+                    res_uri = res.strip()
+                    r_linksets: List[str] = []
+                    r_alts: List[str] = []
+                    r_profs: List[str] = []
+                elif isinstance(res, dict):
+                    res_uri = (res.get("uri") or res.get("href") or res.get("url") or res.get("loc") or str(res)).strip()
+                    r_linksets = _clean_list(res.get("linkset") or res.get("linksets"))
+                    r_alts = _clean_list(res.get("alternate") or res.get("alternates"))
+                    r_profs = _clean_list(res.get("profile") or res.get("profiles"))
+                else:
+                    res_uri = str(res)
+                    r_linksets = []
+                    r_alts = []
+                    r_profs = []
+
                 res_passed = False
                 if sm_node:
                     res_matches = sm_node.all_links.find_links(target=res_uri)
                     res_passed = len(res_matches) > 0
                 res_str = f"        +---> {res_uri}"
-                if len(res_str) > LINE_WIDTH - 12:
-                    res_str = res_str[: LINE_WIDTH - 15] + "..."
-                diagram.append(f"{res_str:<{LINE_WIDTH - 12}} {_status_badge(res_passed)}")
+                if len(res_str) > LINE_WIDTH - 15:
+                    res_str = res_str[: LINE_WIDTH - 18] + "..."
+                diagram.append(f"{res_str:<{LINE_WIDTH - 14}} {_status_badge(res_passed):>13}")
+
+                r_node = nodes.get(res_uri)
+                sub_prefix = "        |     +--- "
+
+                for ls in r_linksets:
+                    ls_passed = False
+                    if sm_node and sm_node.all_links.find_links(rel="linkset", anchor=res_uri, target=ls):
+                        ls_passed = True
+                    elif r_node and r_node.all_links.find_links(rel="linkset", target=ls):
+                        ls_passed = True
+                    ls_str = f"{sub_prefix}linkset: {ls}"
+                    if len(ls_str) > LINE_WIDTH - 15:
+                        ls_str = ls_str[: LINE_WIDTH - 18] + "..."
+                    diagram.append(f"{ls_str:<{LINE_WIDTH - 14}} {_status_badge(ls_passed):>13}")
+
+                for alt in r_alts:
+                    alt_passed = False
+                    if sm_node and sm_node.all_links.find_links(rel="alternate", anchor=res_uri, target=alt):
+                        alt_passed = True
+                    elif r_node and r_node.all_links.find_links(rel="alternate", target=alt):
+                        alt_passed = True
+                    else:
+                        for ls in r_linksets:
+                            ls_node = nodes.get(ls)
+                            if ls_node and ls_node.all_links.find_links(rel="alternate", anchor=res_uri, target=alt):
+                                alt_passed = True
+                                break
+                    alt_str = f"{sub_prefix}alternate: {alt}"
+                    if len(alt_str) > LINE_WIDTH - 15:
+                        alt_str = alt_str[: LINE_WIDTH - 18] + "..."
+                    diagram.append(f"{alt_str:<{LINE_WIDTH - 14}} {_status_badge(alt_passed):>13}")
+
+                for prof in r_profs:
+                    prof_passed = False
+                    if sm_node and sm_node.all_links.find_links(rel="profile", anchor=res_uri, target=prof):
+                        prof_passed = True
+                    elif r_node and r_node.all_links.find_links(rel="profile", target=prof):
+                        prof_passed = True
+                    prof_str = f"{sub_prefix}profile: {prof}"
+                    if len(prof_str) > LINE_WIDTH - 15:
+                        prof_str = prof_str[: LINE_WIDTH - 18] + "..."
+                    diagram.append(f"{prof_str:<{LINE_WIDTH - 14}} {_status_badge(prof_passed):>13}")
+
+        return "\n".join(diagram)
+
+    @staticmethod
+    def _render_pt06_alternate_consistency(
+        res_spec: Dict[str, Any],
+        roles: Dict[str, Any],
+        result: Any,
+        nodes: Dict[str, ResourceNode],
+    ) -> str:
+        res_uri = res_spec["uri"]
+        sitemap_uri = roles.get("sitemap") or ""
+        r_linksets = res_spec.get("linksets", [])
+        r_alts = res_spec.get("alternates", [])
+        r_profs = res_spec.get("profiles", [])
+        primary_ls = r_linksets[0] if r_linksets else None
+
+        sm_node = nodes.get(sitemap_uri)
+        res_node = nodes.get(res_uri)
+        ls_node = nodes.get(primary_ls) if primary_ls else None
+
+        diagram: List[str] = []
+        diagram.extend(_make_box("Alternate Resources & Consistency Analysis", res_uri))
+        diagram.append(f"  Target Resource:   {res_uri}")
+        if primary_ls:
+            diagram.append(f"  Linkset Document:  {primary_ls}")
+        if sitemap_uri:
+            diagram.append(f"  Sitemap XML:       {sitemap_uri}")
+        diagram.append("")
+
+        # Perspective 1: Sitemap
+        diagram.append(f"[1] Sitemap Perspective ({sitemap_uri or 'sitemap.xml'}):")
+        sm_has_loc = False
+        if sm_node:
+            sm_has_loc = len(sm_node.all_links.find_links(target=res_uri)) > 0
+        loc_str = f"      +--- <loc> entry: {res_uri}"
+        if len(loc_str) > LINE_WIDTH - 15:
+            loc_str = loc_str[: LINE_WIDTH - 18] + "..."
+        diagram.append(f"{loc_str:<{LINE_WIDTH - 14}} {_status_badge(sm_has_loc, 'NOT FOUND'):>13}")
+
+        for ls in r_linksets:
+            found_ls = False
+            if sm_node:
+                found_ls = len(sm_node.all_links.find_links(rel="linkset", anchor=res_uri, target=ls)) > 0
+            ls_str = f"      +--- rel=\"linkset\"   -> {ls}"
+            if len(ls_str) > LINE_WIDTH - 15:
+                ls_str = ls_str[: LINE_WIDTH - 18] + "..."
+            diagram.append(f"{ls_str:<{LINE_WIDTH - 14}} {_status_badge(found_ls, 'NOT FOUND'):>13}")
+
+        for alt in r_alts:
+            found_alt = False
+            if sm_node:
+                found_alt = len(sm_node.all_links.find_links(rel="alternate", anchor=res_uri, target=alt)) > 0
+            alt_str = f"      +--- rel=\"alternate\" -> {alt}"
+            if len(alt_str) > LINE_WIDTH - 15:
+                alt_str = alt_str[: LINE_WIDTH - 18] + "..."
+            diagram.append(f"{alt_str:<{LINE_WIDTH - 14}} {_status_badge(found_alt, 'NOT FOUND'):>13}")
+
+        for prof in r_profs:
+            found_prof = False
+            if sm_node:
+                found_prof = len(sm_node.all_links.find_links(rel="profile", anchor=res_uri, target=prof)) > 0
+            prof_str = f"      +--- rel=\"profile\"   -> {prof}"
+            if len(prof_str) > LINE_WIDTH - 15:
+                prof_str = prof_str[: LINE_WIDTH - 18] + "..."
+            diagram.append(f"{prof_str:<{LINE_WIDTH - 14}} {_status_badge(found_prof, 'NOT FOUND'):>13}")
+
+        diagram.append("")
+
+        # Perspective 2: Resource Headers
+        diagram.append(f"[2] Resource Headers Perspective (GET {res_uri}):")
+        res_avail = (res_node is not None and res_node.status_code == 200)
+        res_status_str = f"      +--- HTTP Status 200: {res_uri}"
+        if len(res_status_str) > LINE_WIDTH - 15:
+            res_status_str = res_status_str[: LINE_WIDTH - 18] + "..."
+        diagram.append(f"{res_status_str:<{LINE_WIDTH - 14}} {_status_badge(res_avail, 'FAILED'):>13}")
+
+        for ls in r_linksets:
+            found_ls = False
+            if res_node:
+                found_ls = len(res_node.all_links.find_links(rel="linkset", target=ls)) > 0
+            ls_str = f"      +--- rel=\"linkset\"   -> {ls}"
+            if len(ls_str) > LINE_WIDTH - 15:
+                ls_str = ls_str[: LINE_WIDTH - 18] + "..."
+            diagram.append(f"{ls_str:<{LINE_WIDTH - 14}} {_status_badge(found_ls, 'NOT FOUND'):>13}")
+
+        for alt in r_alts:
+            found_alt = False
+            if res_node:
+                found_alt = len(res_node.all_links.find_links(rel="alternate", target=alt)) > 0
+            alt_str = f"      +--- rel=\"alternate\" -> {alt}"
+            if len(alt_str) > LINE_WIDTH - 15:
+                alt_str = alt_str[: LINE_WIDTH - 18] + "..."
+            diagram.append(f"{alt_str:<{LINE_WIDTH - 14}} {_status_badge(found_alt, 'NOT FOUND'):>13}")
+
+        for prof in r_profs:
+            found_prof = False
+            if res_node:
+                found_prof = len(res_node.all_links.find_links(rel="profile", target=prof)) > 0
+            prof_str = f"      +--- rel=\"profile\"   -> {prof}"
+            if len(prof_str) > LINE_WIDTH - 15:
+                prof_str = prof_str[: LINE_WIDTH - 18] + "..."
+            diagram.append(f"{prof_str:<{LINE_WIDTH - 14}} {_status_badge(found_prof, 'NOT FOUND'):>13}")
+
+        diagram.append("")
+
+        # Perspective 3: Linkset Document
+        if primary_ls:
+            diagram.append(f"[3] Linkset Perspective (GET {primary_ls} with anchor={res_uri}):")
+            ls_avail = (ls_node is not None and ls_node.status_code == 200)
+            ls_status_str = f"      +--- HTTP Status 200: {primary_ls}"
+            if len(ls_status_str) > LINE_WIDTH - 15:
+                ls_status_str = ls_status_str[: LINE_WIDTH - 18] + "..."
+            diagram.append(f"{ls_status_str:<{LINE_WIDTH - 14}} {_status_badge(ls_avail, 'FAILED'):>13}")
+
+            for alt in r_alts:
+                found_alt = False
+                if ls_node:
+                    found_alt = len(ls_node.all_links.find_links(rel="alternate", anchor=res_uri, target=alt)) > 0
+                alt_str = f"      +--- rel=\"alternate\" -> {alt}"
+                if len(alt_str) > LINE_WIDTH - 15:
+                    alt_str = alt_str[: LINE_WIDTH - 18] + "..."
+                diagram.append(f"{alt_str:<{LINE_WIDTH - 14}} {_status_badge(found_alt, 'NOT FOUND'):>13}")
+
+            for prof in r_profs:
+                found_prof = False
+                if ls_node:
+                    found_prof = len(ls_node.all_links.find_links(rel="profile", anchor=res_uri, target=prof)) > 0
+                prof_str = f"      +--- rel=\"profile\"   -> {prof}"
+                if len(prof_str) > LINE_WIDTH - 15:
+                    prof_str = prof_str[: LINE_WIDTH - 18] + "..."
+                diagram.append(f"{prof_str:<{LINE_WIDTH - 14}} {_status_badge(found_prof, 'NOT FOUND'):>13}")
+
+            diagram.append("")
+        else:
+            diagram.append("[3] Linkset Perspective: (No linkset configured for this resource)")
+            diagram.append("")
+
+        # Consistency Cross-Reference Matrix
+        diagram.append("-" * LINE_WIDTH)
+        diagram.append("Consistency Triangulation Matrix:")
+
+        col1_w = max(40, LINE_WIDTH - 60)
+        hdr = f"{'Target Relation / URI':<{col1_w}} | {'Sitemap':^12} | {'Resource':^12} | {'Linkset':^12} | {'Consistency':^15}"
+        diagram.append(hdr)
+        diagram.append("-" * min(len(hdr), LINE_WIDTH))
+
+        matrix_items = []
+        for ls in r_linksets:
+            matrix_items.append(("linkset", ls))
+        for alt in r_alts:
+            matrix_items.append(("alternate", alt))
+        for prof in r_profs:
+            matrix_items.append(("profile", prof))
+
+        for rel, target_uri in matrix_items:
+            in_sm = False
+            if sm_node:
+                in_sm = len(sm_node.all_links.find_links(rel=rel, anchor=res_uri, target=target_uri)) > 0
+            sm_str = "[✓ PASS]" if in_sm else "[✗ MISSING]"
+
+            in_res = False
+            if res_node:
+                in_res = len(res_node.all_links.find_links(rel=rel, target=target_uri)) > 0
+            res_str = "[✓ PASS]" if in_res else "[✗ MISSING]"
+
+            if primary_ls:
+                in_ls = False
+                if ls_node:
+                    in_ls = len(ls_node.all_links.find_links(rel=rel, anchor=res_uri, target=target_uri)) > 0
+                ls_str = "[✓ PASS]" if in_ls else "[✗ MISSING]"
+                if rel == "linkset":
+                    all_match = (in_sm and in_res)
+                    ls_str = "    N/A     "
+                else:
+                    all_match = (in_sm and in_res and in_ls)
+            else:
+                ls_str = "    N/A     "
+                all_match = (in_sm and in_res)
+
+            sync_str = "[✓ IN SYNC]" if all_match else "[✗ DESYNC]"
+
+            display_target = f"{rel:<9} -> {target_uri}"
+            if len(display_target) > col1_w:
+                display_target = display_target[: col1_w - 3] + "..."
+
+            diagram.append(f"{display_target:<{col1_w}} | {sm_str:^12} | {res_str:^12} | {ls_str:^12} | {sync_str:^15}")
 
         return "\n".join(diagram)
 
     @staticmethod
     def _render_pt07(roles: Dict[str, Any], result: Any, nodes: Dict[str, ResourceNode]) -> str:
         cat_uri = roles.get("api_catalog") or getattr(result, "target_url", "API Catalog")
-        sm_uri = roles.get("api_catalog_sitemap")
-        endpoints = roles.get("api_endpoints", [])
+        sm_index_uri = roles.get("sitemap_index") or roles.get("sitemap")
+        host_uri = roles.get("host")
+        if not host_uri:
+            ref = cat_uri or sm_index_uri
+            if ref:
+                parsed = urlparse(ref)
+                if parsed.scheme and parsed.netloc:
+                    host_uri = f"{parsed.scheme}://{parsed.netloc}"
 
-        cat_node = nodes.get(cat_uri)
-        sm_passed = False
-        if cat_node and sm_uri:
-            sm_matches = cat_node.all_links.find_links(target=sm_uri)
-            sm_passed = len(sm_matches) > 0
+        robots_raw = roles.get("robots_txt")
+        if robots_raw is None:
+            robots_raw = roles.get("robots")
+        robots_url: Optional[str] = None
+        if robots_raw is None or robots_raw is True:
+            if host_uri:
+                robots_url = f"{host_uri.rstrip('/')}/robots.txt"
+        elif isinstance(robots_raw, str):
+            vl = robots_raw.strip().lower()
+            if vl == "true":
+                if host_uri:
+                    robots_url = f"{host_uri.rstrip('/')}/robots.txt"
+            elif vl != "false":
+                robots_url = robots_raw.strip()
+
+        cat_sm_uri = roles.get("api_catalog_sitemap")
+        if not cat_sm_uri and host_uri:
+            cat_sm_uri = f"{host_uri.rstrip('/')}/.well-known/api-catalog/sitemap-index.xml"
+
+        raw_endpoints = roles.get("api_endpoints") or roles.get("endpoints") or []
+        if isinstance(raw_endpoints, str):
+            raw_endpoints = [raw_endpoints]
+
+        endpoints_data: List[Dict[str, Any]] = []
+        for ep in raw_endpoints:
+            if isinstance(ep, str):
+                ep_u = ep.strip()
+                if ep_u:
+                    endpoints_data.append({
+                        "uri": ep_u,
+                        "sitemap": f"{ep_u.rstrip('/')}/sitemap.xml",
+                        "profile": None,
+                        "subresources": [],
+                    })
+            elif isinstance(ep, dict):
+                ep_u = (ep.get("uri") or ep.get("href") or ep.get("target") or "").strip()
+                if not ep_u:
+                    continue
+                sub_sm = ep.get("sitemap") or ep.get("sub_sitemap")
+                if not sub_sm:
+                    sub_sm = f"{ep_u.rstrip('/')}/sitemap.xml"
+                raw_subs = ep.get("subresources") or ep.get("resources") or []
+                if isinstance(raw_subs, str):
+                    raw_subs = [raw_subs]
+                subs = [r if isinstance(r, str) else r.get("uri", r.get("href")) for r in raw_subs if r]
+                endpoints_data.append({
+                    "uri": ep_u,
+                    "sitemap": sub_sm,
+                    "profile": ep.get("profile"),
+                    "subresources": subs,
+                })
+
+        # Backward compatibility for top-level resources
+        top_res = roles.get("resources") or []
+        if isinstance(top_res, str):
+            top_res = [top_res]
+        if top_res and endpoints_data and not endpoints_data[0]["subresources"]:
+            for r in top_res:
+                r_u = r if isinstance(r, str) else r.get("uri", r.get("href"))
+                if r_u:
+                    endpoints_data[0]["subresources"].append(r_u)
 
         diagram = []
-        diagram.extend(_make_box("API Catalog", cat_uri))
-        if sm_uri:
-            diagram.append(f"        | Sitemap link {_status_badge(sm_passed)}")
-            sm_str = f"        v [ {sm_uri} ]"
-            if len(sm_str) > LINE_WIDTH:
-                sm_str = sm_str[: LINE_WIDTH - 5] + "... ]"
-            diagram.append(sm_str)
 
-        if endpoints:
-            diagram.append("        | Feed Endpoints:")
-            sm_node = nodes.get(sm_uri) or cat_node
-            for ep in endpoints:
-                ep_uri = ep.get("uri") if isinstance(ep, dict) else str(ep)
-                ep_prof = ep.get("profile") if isinstance(ep, dict) else None
-                ep_sub_sm = ep.get("sub_sitemap") if isinstance(ep, dict) else None
-                ep_passed = False
-                if sm_node:
-                    ep_matches = sm_node.all_links.find_links(target=ep_uri)
-                    ep_passed = len(ep_matches) > 0
-                prof_str = f" ({ep_prof})" if ep_prof else ""
-                ep_str = f"        +---> {ep_uri}{prof_str}"
-                if len(ep_str) > LINE_WIDTH - 12:
-                    ep_str = ep_str[: LINE_WIDTH - 15] + "..."
-                diagram.append(f"{ep_str:<{LINE_WIDTH - 12}} {_status_badge(ep_passed)}")
-                if ep_sub_sm:
-                    ep_node = nodes.get(ep_uri)
-                    sub_passed = False
-                    if ep_node:
-                        sub_matches = ep_node.all_links.find_links(rel="alternate", target=ep_sub_sm)
-                        sub_passed = len(sub_matches) > 0
-                    sub_str = f"              +--- sub-sitemap: {ep_sub_sm}"
-                    if len(sub_str) > LINE_WIDTH - 12:
-                        sub_str = sub_str[: LINE_WIDTH - 15] + "..."
-                    diagram.append(f"{sub_str:<{LINE_WIDTH - 12}} {_status_badge(sub_passed)}")
+        # ---------------------------------------------------------------------
+        # Top: Host & robots.txt
+        # ---------------------------------------------------------------------
+        if host_uri:
+            diagram.extend(_make_box("Host", host_uri))
+        if robots_url:
+            robots_node = nodes.get(robots_url)
+            robots_passed = False
+            if robots_node and sm_index_uri:
+                r_matches = robots_node.all_links.find_links(rel="item", target=sm_index_uri)
+                robots_passed = len(r_matches) > 0
+            badge = _status_badge(robots_passed) if robots_node else "[? UNCHECKED]"
+            diagram.append("        |")
+            diagram.append(f"        v [ robots.txt: {robots_url} ]")
+            if sm_index_uri:
+                prompt_line = "        | Sitemap index directive"
+                diagram.append(f"{prompt_line:<{LINE_WIDTH - 14}} {badge:>13}")
+                diagram.append("        v")
+
+        # ---------------------------------------------------------------------
+        # Pillar 2: Sitemaps Hierarchy (sitemaps.org)
+        # ---------------------------------------------------------------------
+        sm_index_node = nodes.get(sm_index_uri) if sm_index_uri else None
+        cat_sm_node = nodes.get(cat_sm_uri) if cat_sm_uri else None
+
+        box2_title = "[2] Sitemaps Hierarchy (sitemaps.org)"
+        box2_content = f"Root Index: {sm_index_uri}" if sm_index_uri else "Root Sitemap Index"
+        diagram.extend(_make_box(box2_title, box2_content))
+
+        diagram.append("        | Delegated Sitemaps:")
+
+        # 2.1 Dedicated Catalog Sitemap
+        if cat_sm_uri:
+            in_index_passed = False
+            if sm_index_node:
+                matches = sm_index_node.all_links.find_links(rel="item", target=cat_sm_uri)
+                in_index_passed = len(matches) > 0
+            badge_index = _status_badge(in_index_passed) if sm_index_node else "[? UNCHECKED]"
+            line_str = f"        +---> Catalog Sitemap: {cat_sm_uri}"
+            if len(line_str) > LINE_WIDTH - 15:
+                line_str = line_str[: LINE_WIDTH - 18] + "..."
+            diagram.append(f"{line_str:<{LINE_WIDTH - 14}} {badge_index:>13}")
+
+            # rel="self" back to api_catalog
+            self_passed = False
+            if cat_sm_node:
+                s_matches = cat_sm_node.all_links.find_links(rel="self", target=cat_uri)
+                self_passed = len(s_matches) > 0
+            badge_self = _status_badge(self_passed) if cat_sm_node else "[? UNCHECKED]"
+            s_str = f"        |     +--- rel=\"self\" -> {cat_uri}"
+            if len(s_str) > LINE_WIDTH - 15:
+                s_str = s_str[: LINE_WIDTH - 18] + "..."
+            diagram.append(f"{s_str:<{LINE_WIDTH - 14}} {badge_self:>13}")
+
+            # entries for each API endpoint
+            for ep_spec in endpoints_data:
+                ep_u = ep_spec["uri"]
+                ep_in_cat_sm = False
+                if cat_sm_node:
+                    loc_m = cat_sm_node.all_links.find_links(rel="item", target=ep_u)
+                    ep_in_cat_sm = len(loc_m) > 0
+                badge_loc = _status_badge(ep_in_cat_sm) if cat_sm_node else "[? UNCHECKED]"
+                loc_str = f"        |     +--- <loc> item -> {ep_u}"
+                if len(loc_str) > LINE_WIDTH - 15:
+                    loc_str = loc_str[: LINE_WIDTH - 18] + "..."
+                diagram.append(f"{loc_str:<{LINE_WIDTH - 14}} {badge_loc:>13}")
+
+        # 2.2 API Sub-Sitemaps
+        for ep_idx, ep_spec in enumerate(endpoints_data):
+            ep_u = ep_spec["uri"]
+            sub_sm = ep_spec.get("sitemap")
+            sub_sm_node = nodes.get(sub_sm) if sub_sm else None
+            is_last_ep = (ep_idx == len(endpoints_data) - 1)
+            prefix = "              " if is_last_ep else "        |     "
+
+            if sub_sm:
+                in_idx_passed = False
+                if sm_index_node:
+                    m = sm_index_node.all_links.find_links(rel="item", target=sub_sm)
+                    in_idx_passed = len(m) > 0
+                badge_in = _status_badge(in_idx_passed) if sm_index_node else "[? UNCHECKED]"
+                branch = "        \\---> " if is_last_ep else "        +---> "
+                sm_line = f"{branch}API Sitemap:     {sub_sm}"
+                if len(sm_line) > LINE_WIDTH - 15:
+                    sm_line = sm_line[: LINE_WIDTH - 18] + "..."
+                diagram.append(f"{sm_line:<{LINE_WIDTH - 14}} {badge_in:>13}")
+
+                # rel="self" back to endpoint
+                self_p = False
+                if sub_sm_node:
+                    sm_self_m = sub_sm_node.all_links.find_links(rel="self", target=ep_u)
+                    self_p = len(sm_self_m) > 0
+                badge_s = _status_badge(self_p) if sub_sm_node else "[? UNCHECKED]"
+                self_line = f"{prefix}+--- rel=\"self\" -> {ep_u}"
+                if len(self_line) > LINE_WIDTH - 15:
+                    self_line = self_line[: LINE_WIDTH - 18] + "..."
+                diagram.append(f"{self_line:<{LINE_WIDTH - 14}} {badge_s:>13}")
+
+                # subresource loc items
+                for r_u in ep_spec["subresources"]:
+                    r_p = False
+                    if sub_sm_node:
+                        rm = sub_sm_node.all_links.find_links(rel="item", target=r_u)
+                        r_p = len(rm) > 0
+                    badge_r = _status_badge(r_p) if sub_sm_node else "[? UNCHECKED]"
+                    r_line = f"{prefix}+--- <loc> item -> {r_u}"
+                    if len(r_line) > LINE_WIDTH - 15:
+                        r_line = r_line[: LINE_WIDTH - 18] + "..."
+                    diagram.append(f"{r_line:<{LINE_WIDTH - 14}} {badge_r:>13}")
+
+        diagram.append("")
+
+        # ---------------------------------------------------------------------
+        # Pillar 3: API Catalog (RFC 9727 /.well-known/api-catalog)
+        # ---------------------------------------------------------------------
+        cat_node = nodes.get(cat_uri)
+        box3_title = "[3] API Catalog (RFC 9727)"
+        diagram.extend(_make_box(box3_title, cat_uri))
+
+        if cat_sm_uri:
+            alt_passed = False
+            if cat_node:
+                alt_m = cat_node.all_links.find_links(rel="alternate", target=cat_sm_uri)
+                alt_passed = len(alt_m) > 0
+            badge_alt = _status_badge(alt_passed) if cat_node else "[? UNCHECKED]"
+            alt_str = f"        +---> rel=\"alternate\" -> {cat_sm_uri}"
+            if len(alt_str) > LINE_WIDTH - 15:
+                alt_str = alt_str[: LINE_WIDTH - 18] + "..."
+            diagram.append(f"{alt_str:<{LINE_WIDTH - 14}} {badge_alt:>13}")
+
+        for ep_spec in endpoints_data:
+            ep_u = ep_spec["uri"]
+            item_passed = False
+            if cat_node:
+                im = cat_node.all_links.find_links(rel="item", target=ep_u)
+                item_passed = len(im) > 0
+            badge_item = _status_badge(item_passed) if cat_node else "[? UNCHECKED]"
+            it_str = f"        +---> rel=\"item\"      -> {ep_u}"
+            if len(it_str) > LINE_WIDTH - 15:
+                it_str = it_str[: LINE_WIDTH - 18] + "..."
+            diagram.append(f"{it_str:<{LINE_WIDTH - 14}} {badge_item:>13}")
+
+        diagram.append("")
+
+        # ---------------------------------------------------------------------
+        # Pillar 1: API Services & Subresources
+        # ---------------------------------------------------------------------
+        box1_title = "[1] API Services & Subresources"
+        ep_summary = ", ".join(e["uri"] for e in endpoints_data) if endpoints_data else "API Endpoints"
+        diagram.extend(_make_box(box1_title, ep_summary))
+
+        for ep_spec in endpoints_data:
+            ep_u = ep_spec["uri"]
+            sub_sm = ep_spec.get("sitemap")
+            prof = ep_spec.get("profile")
+            ep_node = nodes.get(ep_u)
+
+            ep_line = f"        +---> API Endpoint: {ep_u}"
+            if len(ep_line) > LINE_WIDTH - 15:
+                ep_line = ep_line[: LINE_WIDTH - 18] + "..."
+            ep_reachable = ep_node is not None and getattr(ep_node, "status_code", 0) < 400
+            badge_ep = _status_badge(ep_reachable) if ep_node else "[? UNCHECKED]"
+            diagram.append(f"{ep_line:<{LINE_WIDTH - 14}} {badge_ep:>13}")
+
+            # rel="api-catalog"
+            cat_p = False
+            if ep_node:
+                cm = ep_node.all_links.find_links(rel="api-catalog", target=cat_uri)
+                cat_p = len(cm) > 0
+            badge_cat = _status_badge(cat_p) if ep_node else "[? UNCHECKED]"
+            cat_str = f"              +--- rel=\"api-catalog\" -> {cat_uri}"
+            if len(cat_str) > LINE_WIDTH - 15:
+                cat_str = cat_str[: LINE_WIDTH - 18] + "..."
+            diagram.append(f"{cat_str:<{LINE_WIDTH - 14}} {badge_cat:>13}")
+
+            # rel="alternate" to sub_sitemap
+            if sub_sm:
+                sm_p = False
+                if ep_node:
+                    sm_m = ep_node.all_links.find_links(rel="alternate", target=sub_sm)
+                    sm_p = len(sm_m) > 0
+                badge_sm = _status_badge(sm_p) if ep_node else "[? UNCHECKED]"
+                sub_str = f"              +--- rel=\"alternate\"   -> {sub_sm}"
+                if len(sub_str) > LINE_WIDTH - 15:
+                    sub_str = sub_str[: LINE_WIDTH - 18] + "..."
+                diagram.append(f"{sub_str:<{LINE_WIDTH - 14}} {badge_sm:>13}")
+
+            # rel="profile"
+            if prof:
+                pr_p = False
+                if ep_node:
+                    pr_m = ep_node.all_links.find_links(rel="profile", target=prof)
+                    pr_p = len(pr_m) > 0
+                badge_pr = _status_badge(pr_p) if ep_node else "[? UNCHECKED]"
+                pr_str = f"              +--- rel=\"profile\"     -> {prof}"
+                if len(pr_str) > LINE_WIDTH - 15:
+                    pr_str = pr_str[: LINE_WIDTH - 18] + "..."
+                diagram.append(f"{pr_str:<{LINE_WIDTH - 14}} {badge_pr:>13}")
+
+            # Subresources collection uplink
+            if ep_spec["subresources"]:
+                diagram.append("              +--- Subresources (rel=\"collection\" uplink):")
+                for r_u in ep_spec["subresources"]:
+                    r_node = nodes.get(r_u)
+                    col_p = False
+                    if r_node:
+                        col_m = r_node.all_links.find_links(rel="collection", target=ep_u)
+                        col_p = len(col_m) > 0
+                    badge_col = _status_badge(col_p) if r_node else "[? UNCHECKED]"
+                    res_str = f"                   +--- {r_u}"
+                    if len(res_str) > LINE_WIDTH - 15:
+                        res_str = res_str[: LINE_WIDTH - 18] + "..."
+                    diagram.append(f"{res_str:<{LINE_WIDTH - 14}} {badge_col:>13}")
 
         return "\n".join([line for line in diagram if line])
 

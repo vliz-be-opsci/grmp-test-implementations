@@ -115,21 +115,33 @@ class SuiteRunner:
             for role_val in test_config.pattern_roles.values():
                 vals = role_val if isinstance(role_val, list) else [role_val]
                 for v in vals:
-                    uri_str = v if isinstance(v, str) else (v.get("uri") or v.get("href") if isinstance(v, dict) else None)
-                    if isinstance(uri_str, str) and uri_str.startswith(("http://", "https://")):
-                        if uri_str not in self.node_cache:
-                            try:
-                                r_node = self.harvester.harvest(
-                                    uri_str,
-                                    client=client,
-                                    expand_linksets=test_config.expand_linksets,
-                                )
-                                r_node.duration = 0.0
-                                self.node_cache[uri_str] = r_node
-                            except Exception:
-                                pass
-                        if uri_str in self.node_cache:
-                            harvested_nodes[uri_str] = self.node_cache[uri_str]
+                    uris_to_harvest: List[str] = []
+                    if isinstance(v, str):
+                        uris_to_harvest.append(v)
+                    elif isinstance(v, dict):
+                        for k in ("uri", "href", "url", "target", "linkset", "linksets", "master_linkset", "sitemap", "sub_sitemap", "subresources", "resources"):
+                            kv = v.get(k)
+                            if isinstance(kv, str):
+                                uris_to_harvest.append(kv)
+                            elif isinstance(kv, list):
+                                for item in kv:
+                                    if isinstance(item, str):
+                                        uris_to_harvest.append(item)
+                    for uri_str in uris_to_harvest:
+                        if isinstance(uri_str, str) and uri_str.startswith(("http://", "https://")):
+                            if uri_str not in self.node_cache:
+                                try:
+                                    r_node = self.harvester.harvest(
+                                        uri_str,
+                                        client=client,
+                                        expand_linksets=False if ("linkset" in uri_str or uri_str.endswith(".json")) else test_config.expand_linksets,
+                                    )
+                                    r_node.duration = 0.0
+                                    self.node_cache[uri_str] = r_node
+                                except Exception:
+                                    pass
+                            if uri_str in self.node_cache:
+                                harvested_nodes[uri_str] = self.node_cache[uri_str]
 
         from reporter.diagram import ASCIIDiagramRenderer
 

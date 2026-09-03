@@ -15,8 +15,9 @@ patterns:
     uris:
       resource: "http://localhost:8080/id/dataset/arms-mbon"
       profile: "http://localhost:8080/id/profile/marine-genomic-dataset-profile"
-      profile_alternate: "http://localhost:8080/id/profile/marine-genomic-dataset-profile.ttl"
-      profile_type: "http://www.w3.org/ns/dx/prof/Profile"
+      profile_description: "http://localhost:8080/id/profile/marine-genomic-dataset-profile.ttl"
+      profile_description_type: "http://www.w3.org/ns/dx/prof/Profile"
+      profile_type: "https://www.rfc-editor.org/info/rfc6906"
 
   - name: "[PT-01] North Sea Sensors Profile Conformity"
     type: "PT-01"
@@ -140,9 +141,9 @@ patterns:
       dataset: "http://localhost:8080/id/dataset/arms-mbon"
       base_api: "http://localhost:8080/api/observations/v1"
       api_catalog: "http://localhost:8080/.well-known/api-catalog"
-      service_desc: "http://localhost:8080/api/openapi.json"
-      service_doc: "http://localhost:8080/api/docs/"
-      service_meta: "http://localhost:8080/id/service/marineinfo-api.ttl"
+      service_desc: "http://localhost:8080/api/observations/v1/openapi.json"
+      service_doc: "http://localhost:8080/api/observations/v1/docs/"
+      service_meta: "http://localhost:8080/api/observations/v1/meta.ttl"
 
   # ============================================================================
   # PT-06: Hostwide Discovery
@@ -151,14 +152,21 @@ patterns:
     type: "PT-06"
     uris:
       host: "http://localhost:8080"
-      robots_txt: "http://localhost:8080/robots.txt"
+      robots_txt: true
       sitemap: "http://localhost:8080/sitemap.xml"
       resources:
-        - "http://localhost:8080/id/dataset/arms-mbon"
-        - "http://localhost:8080/id/dataset/arms-2018"
-        - "http://localhost:8080/id/dataset/eurobis-occurrences"
-        - "http://localhost:8080/id/dataset/north-sea-sensors"
-        - "http://localhost:8080/id/institute/vliz"
+        - uri: "http://localhost:8080/id/dataset/arms-mbon"
+          linkset: "http://localhost:8080/id/dataset/arms-mbon.linkset.json"
+          profile: "http://localhost:8080/id/profile/marine-genomic-dataset-profile"
+        - uri: "http://localhost:8080/id/dataset/arms-2018"
+          profile: "http://localhost:8080/id/profile/marine-ecological-baseline-profile"
+        - uri: "http://localhost:8080/id/dataset/eurobis-occurrences"
+          linkset: "http://localhost:8080/id/dataset/eurobis-occurrences.linkset.json"
+          profile: "http://localhost:8080/id/profile/darwin-core-occurrence-profile"
+        - uri: "http://localhost:8080/id/dataset/north-sea-sensors"
+          profile: "http://localhost:8080/id/profile/marine-buoy-telemetry-profile"
+        - uri: "http://localhost:8080/id/institute/vliz"
+          linkset: "http://localhost:8080/id/institute/vliz.linkset.json"
 
   # ============================================================================
   # PT-07: Catalog Assistance & Feed Discovery

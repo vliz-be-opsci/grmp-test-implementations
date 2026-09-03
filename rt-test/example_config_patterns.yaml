@@ -149,11 +149,17 @@ patterns:
     type: "PT-06"
     uris:
       host: "http://localhost:8080"
-      robots_txt: "http://localhost:8080/robots.txt"
+      robots_txt: true
       sitemap: "http://localhost:8080/sitemap.xml"
       resources:
-        - "http://localhost:8080/id/dataset/arms-mbon"
-        - "http://localhost:8080/id/dataset/arms-2018"
+        - uri: "http://localhost:8080/id/dataset/arms-mbon"
+          linkset: "http://localhost:8080/id/dataset/arms-mbon.linkset.json"
+          alternates:
+            - "http://localhost:8080/id/dataset/arms-mbon.ttl"
+            - "http://localhost:8080/id/dataset/arms-mbon.jsonld"
+          profile: "http://localhost:8080/id/profile/marine-genomic-dataset-profile"
+        - uri: "http://localhost:8080/id/dataset/arms-2018"
+          profile: "http://localhost:8080/id/profile/marine-ecological-baseline-profile"
         - "http://localhost:8080/id/dataset/north-sea-sensors"
         - "http://localhost:8080/id/dataset/eurobis-occurrences"
 
@@ -163,13 +169,17 @@ patterns:
   - name: "Hostwide API Catalog & Feed Discovery (PT-07)"
     type: "PT-07"
     uris:
+      host: "http://localhost:8080"
+      robots_txt: true
+      sitemap_index: "http://localhost:8080/sitemap-index.xml"
       api_catalog: "http://localhost:8080/.well-known/api-catalog"
-      api_catalog_sitemap: "http://localhost:8080/.well-known/api-catalog/sitemap.xml"
-      sitemap_index: "http://localhost:8080/sitemap.xml"
+      api_catalog_sitemap: "http://localhost:8080/.well-known/api-catalog/sitemap-index.xml"
       api_endpoints:
         - uri: "http://localhost:8080/api/observations/v1"
+          sitemap: "http://localhost:8080/api/observations/v1/sitemap.xml"
           profile: "https://w3id.org/ldes/specification"
-          sub_sitemap: "http://localhost:8080/sitemaps/observations-sitemap.xml"
+          subresources:
+            - "http://localhost:8080/api/observations/v1/fragments/1"
 
   # ---------------------------------------------------------------------------
   # 8. PT-08: Large Linksets Split-up & Decomposition (RT-P08)

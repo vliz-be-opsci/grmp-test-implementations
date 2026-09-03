@@ -59,11 +59,12 @@ Each pattern below details:
 
 #### 1. Profile Conformity Declaration (PT-01 / RT-P01)
 
-Declares that a resource conforms to a specific functional profile ([RFC 6906](https://www.rfc-editor.org/info/rfc6906)), and optionally verifies profile metadata (`rel="describedby"`) and type declaration (`rel="type"`).
+Declares that a resource conforms to a specific functional profile ([RFC 6906](https://www.rfc-editor.org/info/rfc6906)), and optionally verifies profile metadata (`rel="describedby"`), profile type declaration (`rel="type"`), and profile description document type/conformance (`rel="type"` on the description document).
 
 * **Required HTTP Link Relationships**:
   - `GET <resource>` $\rightarrow$ `Link: <<profile>>; rel="profile"`
   - `GET <profile>` $\rightarrow$ `Link: <<profile_description>>; rel="describedby"`, `Link: <<profile_type>>; rel="type"`
+  - `GET <profile_description>` $\rightarrow$ `Link: <<profile_description_type>>; rel="type"` (optional)
 
 * **Test Output ASCII Diagram**:
   ```text
@@ -81,8 +82,9 @@ Declares that a resource conforms to a specific functional profile ([RFC 6906](h
   | Profile: <profile>                                                         |
   +----------------------------------------------------------------------------+
           |
-          +---> rel="describedby" -> <profile_description> [✓ PASS]
-          +---> rel="type"        -> <profile_type>        [✓ PASS]
+          +---> rel="describedby" -> <profile_description>             [✓ PASS]
+          |     +--- rel="type"   -> <profile_description_type>        [✓ PASS]
+          +---> rel="type"        -> <profile_type>                    [✓ PASS]
   ==============================================================================
   ```
 
@@ -91,8 +93,10 @@ Declares that a resource conforms to a specific functional profile ([RFC 6906](h
   | :--- | :--- | :--- | :--- |
   | `resource` | URI string | **Required** | The target dataset, service, or landing page declaring conformance. |
   | `profile` | URI string | **Required** | The canonical profile URI that the resource conforms to. |
-  | `profile_description` | URI string | Optional | Documentation or schema describing the profile via `rel="describedby"`. |
-  | `profile_type` | URI string | Optional | Profile type identifier via `rel="type"` (default: `https://www.rfc-editor.org/info/rfc6906`). |
+  | `profile_description` | URI string or object | Optional | Documentation or schema describing the profile via `rel="describedby"`. Supports string URI or object with `uri` and `type`. |
+  | `profile_description_type` | URI string | Optional | Type standard URI for the profile description document (e.g. `http://www.w3.org/ns/dx/prof/Profile`). |
+  | `profile_type` | URI string | Optional | Profile type identifier via `rel="type"` (e.g. `https://www.rfc-editor.org/info/rfc6906` or `http://www.w3.org/ns/dx/prof/Profile`). |
+  | `profile_alternate` | URI string / list | Optional | Alternate representation URI(s) for the profile (e.g. `.ttl`, `.jsonld`, `.html`). |
 
 * **YAML Pattern Syntax**:
   ```yaml
@@ -103,7 +107,8 @@ Declares that a resource conforms to a specific functional profile ([RFC 6906](h
         resource: "http://localhost:8080/id/dataset/arms-mbon"
         profile: "http://localhost:8080/id/profile/marine-genomic-dataset-profile"
         profile_description: "http://localhost:8080/id/profile/marine-genomic-dataset-profile.ttl"
-        profile_type: "https://www.rfc-editor.org/info/rfc6906"
+        profile_description_type: "http://www.w3.org/ns/dx/prof/Profile"
+        profile_type: "http://www.w3.org/ns/dx/prof/Profile"
   ```
 
 ---
@@ -334,13 +339,18 @@ Validates dynamic subsetting APIs and query fragment endpoints, linking query re
 
 #### 6. Hostwide Crawler Discovery (PT-06 / RT-P06)
 
-Validates automated hostwide discovery starting from `/robots.txt` $\rightarrow$ primary `sitemap.xml` (with `<rs:ln>` / `<xhtml:link>` signposting annotations) $\rightarrow$ sample discoverable resources.
+Validates automated hostwide discovery starting from `/robots.txt` $\rightarrow$ primary `sitemap.xml` (with `<rs:ln>` / `<xhtml:link>` signposting annotations) $\rightarrow$ discoverable resources, plus cross-reference consistency checks across the sitemap, the resource itself, and referenced linksets.
 
-* **Required HTTP Link Relationships**:
-  - `GET <robots_txt>` $\rightarrow$ contains `Sitemap: <sitemap>`
-  - `GET <sitemap>` $\rightarrow$ contains `<loc>` / `<rs:ln>` references to `<resource_N>`
+* **Required HTTP Link Relationships & Consistency Checks**:
+  - `GET <robots_txt>` $\rightarrow$ contains `Sitemap: <sitemap>` (optional if `robots_txt: false`)
+  - `GET <sitemap>` $\rightarrow$ contains `<loc>` references to `<resource_N>`
+  - If a resource defines a `linkset` or `alternates`:
+    - **In Sitemap**: `<rs:ln rel="linkset">` and `<rs:ln rel="alternate">` match under the resource `<url>` block.
+    - **On Resource**: HTTP `Link` headers or body links declare the same `rel="linkset"` and `rel="alternate"` targets.
+    - **In Linkset Document**: The referenced linkset (`application/linkset+json`) binds the same `rel="alternate"` targets under `anchor="<resource_URI>"`.
 
-* **Test Output ASCII Diagram**:
+* **Test Output ASCII Diagrams**:
+  1. **Hostwide Discovery Diagram**:
   ```text
   ==============================================================================
   DIAGRAM: Hostwide Crawler Discovery (PT-06)
@@ -351,13 +361,57 @@ Validates automated hostwide discovery starting from `/robots.txt` $\rightarrow$
   +----------------------------------------------------------------------------+
           |
           v
-    [ robots.txt: <robots_txt> ]
+    [ robots.txt: <host>/robots.txt ]
           | Sitemap directive [✓ PASS]
           v
     [ sitemap.xml: <sitemap> ]
           | Resource links:
-          +---> <resource_1> [✓ PASS]
-          +---> <resource_2> [✓ PASS]
+          +---> <resource_1>                                            [✓ PASS]
+          |     +--- linkset: <resource_1.linkset.json>                 [✓ PASS]
+          |     +--- alternate: <resource_1.ttl>                        [✓ PASS]
+          |     +--- profile: <resource_profile>                        [✓ PASS]
+          +---> <resource_2>                                            [✓ PASS]
+  ==============================================================================
+  ```
+
+  2. **Alternate Resources & Triangulation Diagram**:
+  Rendered for each resource and linkset consistency check, displaying the relations from each discovery perspective (sitemap `<rs:ln>`, resource headers, and RFC 9264 linkset document) plus a cross-reference triangulation matrix:
+  ```text
+  ==============================================================================
+  DIAGRAM: Resource Linkset [<ls_uri>] Alternate Consistency
+  Overall Status: [✓ PASS]
+  ------------------------------------------------------------------------------
+  +----------------------------------------------------------------------------+
+  | Alternate Resources & Consistency Analysis: <resource_uri>                  |
+  +----------------------------------------------------------------------------+
+    Target Resource:   <resource_uri>
+    Linkset Document:  <ls_uri>
+    Sitemap XML:       <sitemap_uri>
+
+  [1] Sitemap Perspective (<sitemap_uri>):
+        +--- <loc> entry: <resource_uri>                                [✓ PASS]
+        +--- rel="linkset"   -> <ls_uri>                                [✓ PASS]
+        +--- rel="alternate" -> <alt_1>                                 [✓ PASS]
+        +--- rel="profile"   -> <profile_uri>                           [✓ PASS]
+
+  [2] Resource Headers Perspective (GET <resource_uri>):
+        +--- HTTP Status 200: <resource_uri>                            [✓ PASS]
+        +--- rel="linkset"   -> <ls_uri>                                [✓ PASS]
+        +--- rel="alternate" -> <alt_1>                                 [✓ PASS]
+        +--- rel="profile"   -> <profile_uri>                           [✓ PASS]
+
+  [3] Linkset Perspective (GET <ls_uri> with anchor=<resource_uri>):
+        +--- HTTP Status 200: <ls_uri>                                  [✓ PASS]
+        +--- rel="alternate" -> <alt_1>                                 [✓ PASS]
+        +--- rel="profile"   -> <profile_uri>                           [✓ PASS]
+
+  ------------------------------------------------------------------------------
+  Consistency Triangulation Matrix:
+  Target Relation / URI         |   Sitemap    |   Resource   |   Linkset    |   Consistency  
+  ------------------------------------------------------------------------------
+  linkset   -> <ls_uri>         |   [✓ PASS]   |   [✓ PASS]   |     N/A      |   [✓ IN SYNC]  
+  alternate -> <alt_1>          |   [✓ PASS]   |   [✓ PASS]   |   [✓ PASS]   |   [✓ IN SYNC]  
+  profile   -> <profile_uri>    |   [✓ PASS]   |   [✓ PASS]   |   [✓ PASS]   |   [✓ IN SYNC]  
   ==============================================================================
   ```
 
@@ -365,9 +419,9 @@ Validates automated hostwide discovery starting from `/robots.txt` $\rightarrow$
   | URI Role | Type | Status | Description |
   | :--- | :--- | :--- | :--- |
   | `host` | URI string | **Required** | Base origin URL of the host (e.g. `http://localhost:8080`). |
-  | `robots_txt` | URI string | Optional | Custom `robots.txt` location (defaults to `<host>/robots.txt`). |
+  | `robots_txt` | Boolean or URI string | Optional | Defaults to `true` (checks `<host>/robots.txt`). Set to `false` to skip, or provide a custom URL. |
   | `sitemap` | URI string | Optional | Target `sitemap.xml` URL advertised in `robots.txt`. |
-  | `resources` | List of URIs / Objects | Optional | Key dataset/service resources expected in `<loc>` or `<xhtml:link>`. |
+  | `resources` | List of URIs / Objects | Optional | Key resources expected in `<loc>`. Supports plain URIs or indented objects with `uri`, `linkset`, `alternates`, and `profile`. |
 
 * **YAML Pattern Syntax**:
   ```yaml
@@ -376,40 +430,77 @@ Validates automated hostwide discovery starting from `/robots.txt` $\rightarrow$
       type: "PT-06"
       uris:
         host: "http://localhost:8080"
-        robots_txt: "http://localhost:8080/robots.txt"
+        robots_txt: true
         sitemap: "http://localhost:8080/sitemap.xml"
         resources:
-          - "http://localhost:8080/id/dataset/arms-mbon"
-          - "http://localhost:8080/id/dataset/arms-2018"
+          - uri: "http://localhost:8080/id/dataset/arms-mbon"
+            linkset: "http://localhost:8080/id/dataset/arms-mbon.linkset.json"
+            alternates:
+              - "http://localhost:8080/id/dataset/arms-mbon.ttl"
+              - "http://localhost:8080/id/dataset/arms-mbon.jsonld"
+            profile: "http://localhost:8080/id/profile/marine-genomic-dataset-profile"
+          - uri: "http://localhost:8080/id/dataset/arms-2018"
+            profile: "http://localhost:8080/id/profile/marine-ecological-baseline-profile"
+          - "http://localhost:8080/id/dataset/north-sea-sensors"
   ```
 
 ---
 
-#### 7. Catalog Assistance & Feed Discovery (PT-07 / RT-P07)
+#### 7. Catalog Assistance for Hostwide Discovery (PT-07 / RT-P07)
 
-Validates [RFC 9727](https://www.rfc-editor.org/info/rfc9727) hostwide API Catalogs (`/.well-known/api-catalog`), sitemap feeds, and endpoint discovery.
+Implements the [Catalogue Assisted Resource Exposure](https://github.com/eosc-semantic-interop/if-solutions-proposals/blob/main/proposals/radical-transparency/linkset-usage-patterns/07-catalog-assistance.svg) pattern, delegating granular digital asset discovery to specialized API catalogs and sitemap hierarchies without overwhelming static sitemaps.
 
-* **Required HTTP Link Relationships**:
-  - `GET <api_catalog>` (RFC 9727 `/.well-known/api-catalog`) $\rightarrow$ `Link: <<api_endpoint_N>>; rel="item"`, `Link: <<api_catalog_sitemap>>; rel="alternate"`
-  - `GET <api_endpoint_N>` $\rightarrow$ `Link: <<api_catalog>>; rel="api-catalog"`, `Link: <<profile>>; rel="profile"`, `Link: <<sub_sitemap>>; rel="alternate"`
-  - `GET <sub_sitemap>` $\rightarrow$ `Link: <<api_endpoint_N>>; rel="self"`, `Link: <<api_catalog>>; rel="api-catalog"`
-  - `GET <sub_resource_N>` $\rightarrow$ `Link: <<api_endpoint_N>>; rel="collection"`
+* **Required HTTP & Sitemap Relationships (Tripartite Architecture)**:
+  - **Sitemaps Hierarchy (`sitemaps.org`)**:
+    - `GET <host>/robots.txt` $\rightarrow$ `Sitemap: <<sitemap_index>>`
+    - `GET <sitemap_index>` (Root Sitemap Index) $\rightarrow$ `<sitemap><loc><<api_catalog_sitemap>></loc></sitemap>`, `<sitemap><loc><<api_sub_sitemap>></loc></sitemap>`
+    - `GET <api_catalog_sitemap>` $\rightarrow$ `Link: <<api_catalog>>; rel="self"`, `<url><loc><<api_endpoint>></loc></url>`
+    - `GET <api_sub_sitemap>` $\rightarrow$ `Link: <<api_endpoint>>; rel="self"`, `<url><loc><<subresource>></loc></url>`
+  - **API Catalog (`api-catalog`)**:
+    - `GET <api_catalog>` ([RFC 9727](https://www.rfc-editor.org/info/rfc9727) `/.well-known/api-catalog`) $\rightarrow$ `Link: <<api_catalog_sitemap>>; rel="alternate"`, `Link: <<api_endpoint>>; rel="item"`
+  - **API Services & Subresources (`api & subresources`)**:
+    - `GET <api_endpoint>` $\rightarrow$ `Link: <<api_catalog>>; rel="api-catalog"`, `Link: <<api_sub_sitemap>>; rel="alternate"`, (optional `Link: <<profile>>; rel="profile"`)
+    - `GET <subresource>` $\rightarrow$ `Link: <<api_endpoint>>; rel="collection"`
 
 * **Test Output ASCII Diagram**:
   ```text
   ==============================================================================
-  DIAGRAM: Hostwide API Catalog & Feeds (PT-07)
+  DIAGRAM: Catalog Assistance for Hostwide Discovery (PT-07)
   Overall Status: [✓ PASS]
   ------------------------------------------------------------------------------
   +----------------------------------------------------------------------------+
-  | API Catalog: <api_catalog>                                                 |
+  | Host: <host>                                                               |
   +----------------------------------------------------------------------------+
-          | Sitemap link [✓ PASS]
-          v [ <api_catalog_sitemap> ]
-          | Feed Endpoints:
-          +---> <api_endpoint_1> (profile="<profile_1>") [✓ PASS]
-                +--- sub-sitemap: <sub_sitemap_1> [✓ PASS]
-          +---> <api_endpoint_2> (profile="<profile_2>") [✓ PASS]
+          |
+          v [ robots.txt: <host>/robots.txt ]
+          | Sitemap index directive                                    [✓ PASS]
+          v
+  +----------------------------------------------------------------------------+
+  | [2] Sitemaps Hierarchy (sitemaps.org)                                      |
+  | Root Index: <sitemap_index>                                                |
+  +----------------------------------------------------------------------------+
+          | Delegated Sitemaps:
+          +---> Catalog Sitemap: <api_catalog_sitemap>                 [✓ PASS]
+          |     +--- rel="self" -> <api_catalog>                       [✓ PASS]
+          |     +--- <loc> item -> <api_endpoint>                      [✓ PASS]
+          \---> API Sitemap:     <api_sub_sitemap>                     [✓ PASS]
+                +--- rel="self" -> <api_endpoint>                      [✓ PASS]
+                +--- <loc> item -> <subresource_1>                     [✓ PASS]
+
+  +----------------------------------------------------------------------------+
+  | [3] API Catalog (RFC 9727)                                                 |
+  +----------------------------------------------------------------------------+
+          +---> rel="alternate" -> <api_catalog_sitemap>               [✓ PASS]
+          +---> rel="item"      -> <api_endpoint>                      [✓ PASS]
+
+  +----------------------------------------------------------------------------+
+  | [1] API Services & Subresources                                            |
+  +----------------------------------------------------------------------------+
+          +---> API Endpoint: <api_endpoint>                           [✓ PASS]
+                +--- rel="api-catalog" -> <api_catalog>                [✓ PASS]
+                +--- rel="alternate"   -> <api_sub_sitemap>            [✓ PASS]
+                +--- Subresources (rel="collection" uplink):
+                     +--- <subresource_1>                              [✓ PASS]
   ==============================================================================
   ```
 
@@ -417,10 +508,12 @@ Validates [RFC 9727](https://www.rfc-editor.org/info/rfc9727) hostwide API Catal
   | URI Role | Type | Status | Description |
   | :--- | :--- | :--- | :--- |
   | `api_catalog` | URI string | **Required** | RFC 9727 API catalog endpoint (`/.well-known/api-catalog`). |
-  | `api_catalog_sitemap` | URI string | Optional | Catalog sitemap feed link. |
-  | `sitemap_index` | URI string | Optional | Sitemap index grouping feed sitemaps. |
-  | `api_endpoints` | List of Objects / URIs | Optional | API endpoints (`uri`, optional `profile`, optional `sub_sitemap`). |
-  | `resources` | List of URIs | Optional | Expected catalog resource items linked back via `rel="collection"`. |
+  | `host` | URI string | Optional | Root host domain (auto-derived from `api_catalog` if omitted). |
+  | `robots_txt` | Boolean or URI string | Optional | Defaults to `true` (resolves to `<host>/robots.txt`). Set to `false` to skip. |
+  | `sitemap_index` | URI string | Optional | Root sitemap index XML URL advertised in `robots.txt`. |
+  | `api_catalog_sitemap` | URI string | Optional | Dedicated catalog sitemap (defaults to `/.well-known/api-catalog/sitemap-index.xml`). |
+  | `api_endpoints` | List of Objects / URIs | Optional | API endpoints supporting `uri`, `sitemap`, `profile`, and `subresources`. |
+  | `resources` | List of URIs | Optional | Legacy alias for granular subresources. |
 
 * **YAML Pattern Syntax**:
   ```yaml
@@ -428,10 +521,17 @@ Validates [RFC 9727](https://www.rfc-editor.org/info/rfc9727) hostwide API Catal
     - name: "Hostwide API Catalog & Feeds"
       type: "PT-07"
       uris:
+        host: "http://localhost:8080"
+        robots_txt: true
+        sitemap_index: "http://localhost:8080/sitemap-index.xml"
         api_catalog: "http://localhost:8080/.well-known/api-catalog"
-        api_catalog_sitemap: "http://localhost:8080/sitemap.xml"
+        api_catalog_sitemap: "http://localhost:8080/.well-known/api-catalog/sitemap-index.xml"
         api_endpoints:
           - uri: "http://localhost:8080/api/observations/v1"
+            sitemap: "http://localhost:8080/api/observations/v1/sitemap.xml"
+            profile: "https://w3id.org/ldes/specification"
+            subresources:
+              - "http://localhost:8080/api/observations/v1/fragments/1"
   ```
 
 ---
