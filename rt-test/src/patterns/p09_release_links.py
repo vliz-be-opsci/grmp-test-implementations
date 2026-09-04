@@ -170,6 +170,7 @@ class ReleaseLinksPattern(RTPattern):
                     rel_pid = None
                     rel_series = series_uri
                     rel_history = history_uri
+                    rel_coll = None
                 elif isinstance(item, dict):
                     rel_uri = item.get("uri") or item.get("href") or item.get("url")
                     rel_version = item.get("version")
@@ -178,6 +179,7 @@ class ReleaseLinksPattern(RTPattern):
                     rel_pid = item.get("pid") or item.get("doi") or item.get("cite_as")
                     rel_series = item.get("series") or series_uri
                     rel_history = item.get("history") or item.get("version_history") or history_uri
+                    rel_coll = item.get("collection")
                 else:
                     continue
 
@@ -188,17 +190,17 @@ class ReleaseLinksPattern(RTPattern):
 
                 rel_expectations: List[RelationExpectation] = []
 
-                # Every release belongs to the conceptual series collection
-                if rel_series:
+                # Optional explicit collection link if specified in release config
+                if rel_coll:
                     rel_expectations.append(
                         RelationExpectation(
                             rel="collection",
-                            target=rel_series,
+                            target=rel_coll,
                             exists=True,
                         )
                     )
 
-                # Every release links to the version history archive
+                # Every release links to the version history archive (supposed collection of versions)
                 if rel_history:
                     rel_expectations.append(
                         RelationExpectation(
@@ -253,13 +255,16 @@ class ReleaseLinksPattern(RTPattern):
         elif check_releases and latest_uri:
             # Simple / Pairwise mode: test latest release directly
             release_items_for_history.append(latest_uri)
-            latest_expectations: List[RelationExpectation] = [
-                RelationExpectation(
-                    rel="collection",
-                    target=series_uri,
-                    exists=True,
+            latest_expectations: List[RelationExpectation] = []
+            single_collection = self.get_role_uri("latest_collection") or self.get_role_uri("collection")
+            if single_collection:
+                latest_expectations.append(
+                    RelationExpectation(
+                        rel="collection",
+                        target=single_collection,
+                        exists=True,
+                    )
                 )
-            ]
             if history_uri:
                 latest_expectations.append(
                     RelationExpectation(
@@ -297,13 +302,18 @@ class ReleaseLinksPattern(RTPattern):
         # 3. Version History Archive Conformance
         # =====================================================================
         if check_history and history_uri:
-            history_expectations: List[RelationExpectation] = [
-                RelationExpectation(
-                    rel="collection",
-                    target=series_uri,
-                    exists=True,
+            history_expectations: List[RelationExpectation] = []
+
+            # Optional explicit history collection if specified
+            history_collection = self.get_role_uri("history_collection")
+            if history_collection:
+                history_expectations.append(
+                    RelationExpectation(
+                        rel="collection",
+                        target=history_collection,
+                        exists=True,
+                    )
                 )
-            ]
 
             if history_profile:
                 history_expectations.append(

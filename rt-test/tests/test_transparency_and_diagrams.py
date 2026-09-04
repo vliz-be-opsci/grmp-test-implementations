@@ -112,7 +112,57 @@ def test_diagram_renderer_pt01_to_pt08_and_generic():
     assert "[✗ FAILED]" in diag_04
     assert "Content Payload" in diag_04
     assert "[✗ MISSING]" in diag_04
+    assert "Persistent Identifier" in diag_04
+    assert "Metadata Descriptions" in diag_04
+    assert "[Machine / Option B]" in diag_04
     assert "HTTP Call Trace & Provenance:" not in diag_04
+
+    # PT-04 Passing full tree flow with descriptions, alternates, and conceptual resource
+    c_node = ResourceNode(uri="https://example.org/data/samples.csv", status_code=200, content_type="text/csv")
+    c_node.direct_links.add(WebLink(anchor=c_node.uri, href="https://doi.org/10.1234/test", rel="cite-as"))
+    c_node.direct_links.add(WebLink(anchor=c_node.uri, href="https://example.org/meta.ttl", rel="describedby", media_type="text/turtle"))
+    c_node.direct_links.add(WebLink(anchor=c_node.uri, href="https://example.org/meta.html", rel="describedby", media_type="text/html"))
+
+    d_ttl = ResourceNode(uri="https://example.org/meta.ttl", status_code=200, content_type="text/turtle")
+    d_ttl.direct_links.add(WebLink(anchor=d_ttl.uri, href="https://example.org/id/dataset/1", rel="describes"))
+    d_ttl.direct_links.add(WebLink(anchor=d_ttl.uri, href="https://example.org/meta.html", rel="alternate", media_type="text/html"))
+
+    d_html = ResourceNode(uri="https://example.org/meta.html", status_code=200, content_type="text/html")
+    d_html.direct_links.add(WebLink(anchor=d_html.uri, href="https://example.org/id/dataset/1", rel="describes"))
+    d_html.direct_links.add(WebLink(anchor=d_html.uri, href="https://example.org/meta.ttl", rel="alternate", media_type="text/turtle"))
+
+    pt04_nodes = {c_node.uri: c_node, d_ttl.uri: d_ttl, d_html.uri: d_html}
+    res_pt04_pass = AssertionResult(
+        case_name="[PT-04] Samples Direct CSV Payload Citation",
+        target_url=c_node.uri,
+        passed=True,
+        pattern_id="PT-04",
+        pattern_roles={
+            "pid": "https://doi.org/10.1234/test",
+            "content": "https://example.org/data/samples.csv",
+            "resource": "https://example.org/id/dataset/1",
+            "descriptions": [
+                {"uri": "https://example.org/meta.ttl", "type": "text/turtle"},
+                {"uri": "https://example.org/meta.html", "type": "text/html"},
+            ],
+        },
+        harvest_node=c_node,
+    )
+    diag_04_pass = ASCIIDiagramRenderer.render_assertion_result(res_pt04_pass, pt04_nodes)
+    assert "[✓ PASS]" in diag_04_pass
+    assert "Content Payload: https://example.org/data/samples.csv" in diag_04_pass
+    assert 'rel="cite-as" -> https://doi.org/10.1234/test' in diag_04_pass
+    assert "[Machine / Option B] https://example.org/meta.ttl [text/turtle]" in diag_04_pass
+    assert '[HTML / Option A] https://example.org/meta.html [text/html]' in diag_04_pass
+    assert 'rel="describes" -> https://example.org/id/dataset/1' in diag_04_pass
+    assert 'rel="alternate" -> https://example.org/meta.html' in diag_04_pass
+    assert 'rel="alternate" -> https://example.org/meta.ttl' in diag_04_pass
+    assert "Target Conceptual Resource: https://example.org/id/dataset/1" in diag_04_pass
+
+    # Ensure all lines conform to LINE_WIDTH
+    for line in diag_04_pass.split("\n"):
+        assert len(line) <= 140
+
 
     # Raw / Generic Assertion
     res_generic = AssertionResult(
@@ -361,6 +411,43 @@ def test_render_pt01_diagram_with_profile_description_type():
     diag = ASCIIDiagramRenderer.render_assertion_result(res, nodes)
     assert 'rel="describedby" -> https://example.org/profile/p1.ttl' in diag
     assert 'rel="type"        -> http://www.w3.org/ns/dx/prof/Profile' in diag
+    assert 'rel="type"        -> https://www.rfc-editor.org/info/rfc6906' in diag
+    assert "[✓ PASS]" in diag
+
+
+def test_render_pt01_diagram_with_profile_description_profile():
+    res_node = ResourceNode(uri="https://example.org/dataset/1", status_code=200)
+    res_node.direct_links.add(WebLink(anchor="https://example.org/dataset/1", rel="profile", href="https://example.org/profile/p1"))
+
+    prof_node = ResourceNode(uri="https://example.org/profile/p1", status_code=200)
+    prof_node.direct_links.add(WebLink(anchor="https://example.org/profile/p1", rel="describedby", href="https://example.org/profile/p1.ttl"))
+    prof_node.direct_links.add(WebLink(anchor="https://example.org/profile/p1", rel="type", href="https://www.rfc-editor.org/info/rfc6906"))
+
+    desc_node = ResourceNode(uri="https://example.org/profile/p1.ttl", status_code=200)
+    desc_node.direct_links.add(WebLink(anchor="https://example.org/profile/p1.ttl", rel="profile", href="http://www.w3.org/ns/dx/prof/Profile"))
+
+    res = AssertionResult(
+        case_name="rt_relation [https://example.org/dataset/1] [rel=profile]",
+        target_url="https://example.org/dataset/1",
+        passed=True,
+        pattern_id="PT-01",
+        pattern_roles={
+            "resource": "https://example.org/dataset/1",
+            "profile": "https://example.org/profile/p1",
+            "profile_description": "https://example.org/profile/p1.ttl",
+            "profile_description_profile": "http://www.w3.org/ns/dx/prof/Profile",
+            "profile_type": "https://www.rfc-editor.org/info/rfc6906",
+        },
+    )
+
+    nodes = {
+        "https://example.org/dataset/1": res_node,
+        "https://example.org/profile/p1": prof_node,
+        "https://example.org/profile/p1.ttl": desc_node,
+    }
+    diag = ASCIIDiagramRenderer.render_assertion_result(res, nodes)
+    assert 'rel="describedby" -> https://example.org/profile/p1.ttl' in diag
+    assert 'rel="profile"     -> http://www.w3.org/ns/dx/prof/Profile' in diag
     assert 'rel="type"        -> https://www.rfc-editor.org/info/rfc6906' in diag
     assert "[✓ PASS]" in diag
 

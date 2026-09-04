@@ -55,12 +55,21 @@ class ProfileDeclarationPattern(RTPattern):
         PatternRoleDefinition(
             name="profile_description_type",
             required=False,
-            description="Type standard URI for the profile description document (e.g. prof:Profile)",
+            description="Type standard URI for the profile description document (rel=type, e.g. RFC 6906)",
             aliases=[
                 "description_type",
                 "profile_desc_type",
-                "profile_description_profile",
+                "desc_type",
+            ],
+        ),
+        PatternRoleDefinition(
+            name="profile_description_profile",
+            required=False,
+            description="Profile URI to which the profile description document conforms (rel=profile, e.g. prof:Profile)",
+            aliases=[
                 "description_profile",
+                "profile_desc_profile",
+                "desc_profile",
             ],
         ),
         PatternRoleDefinition(
@@ -89,13 +98,16 @@ class ProfileDeclarationPattern(RTPattern):
         raw_desc = self.roles.get("profile_description") or self.roles.get("description") or self.roles.get("profile_doc")
         profile_desc = None
         profile_desc_type = self.get_role_uri("profile_description_type")
+        profile_desc_profile = self.get_role_uri("profile_description_profile")
 
         if isinstance(raw_desc, str) and raw_desc.strip():
             profile_desc = raw_desc.strip()
         elif isinstance(raw_desc, dict):
             profile_desc = (raw_desc.get("uri") or raw_desc.get("href") or raw_desc.get("url") or "").strip() or None
             if not profile_desc_type:
-                profile_desc_type = (raw_desc.get("type") or raw_desc.get("profile") or "").strip() or None
+                profile_desc_type = (raw_desc.get("type") or "").strip() or None
+            if not profile_desc_profile:
+                profile_desc_profile = (raw_desc.get("profile") or "").strip() or None
         else:
             profile_desc = self.get_role_uri("profile_description")
 
@@ -155,19 +167,30 @@ class ProfileDeclarationPattern(RTPattern):
                     )
                 )
 
-        # 3. Profile description type / conformance expectations (if profile_description_type is specified)
-        if profile_desc and profile_desc_type:
+        # 3. Profile description type and profile conformance expectations
+        if profile_desc and (profile_desc_type or profile_desc_profile):
+            desc_conformance_expectations: List[RelationExpectation] = []
+            if profile_desc_profile:
+                desc_conformance_expectations.append(
+                    RelationExpectation(
+                        rel="profile",
+                        target=profile_desc_profile,
+                        exists=True,
+                    )
+                )
+            if profile_desc_type:
+                desc_conformance_expectations.append(
+                    RelationExpectation(
+                        rel="type",
+                        target=profile_desc_type,
+                        exists=True,
+                    )
+                )
             test_cases.append(
                 self.create_test_case(
                     name_suffix="Profile Description Conformance",
                     target_urls=[profile_desc],
-                    relations=[
-                        RelationExpectation(
-                            rel="type",
-                            target=profile_desc_type,
-                            exists=True,
-                        )
-                    ],
+                    relations=desc_conformance_expectations,
                 )
             )
 

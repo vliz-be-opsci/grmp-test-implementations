@@ -16,7 +16,7 @@ patterns:
       resource: "http://localhost:8080/id/dataset/arms-mbon"
       profile: "http://localhost:8080/id/profile/marine-genomic-dataset-profile"
       profile_description: "http://localhost:8080/id/profile/marine-genomic-dataset-profile.ttl"
-      profile_description_type: "http://www.w3.org/ns/dx/prof/Profile"
+      profile_description_profile: "http://www.w3.org/ns/dx/prof/Profile"
       profile_type: "https://www.rfc-editor.org/info/rfc6906"
 
   - name: "[PT-01] North Sea Sensors Profile Conformity"

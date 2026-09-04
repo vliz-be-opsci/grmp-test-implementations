@@ -182,6 +182,45 @@ class TestPT01ProfileDeclaration:
         rels = {r.rel: r.target for r in cases[2].expect.relations}
         assert rels["type"] == "http://www.w3.org/ns/dx/prof/Profile"
 
+    def test_resolve_with_profile_description_profile(self):
+        pattern = PatternRegistry.create(
+            "PT-01",
+            roles={
+                "resource": "https://example.org/dataset/1",
+                "profile": "https://example.org/profile/marine",
+                "profile_description": "https://example.org/profile/marine.ttl",
+                "profile_description_profile": "http://www.w3.org/ns/dx/prof/Profile",
+                "profile_type": "https://www.rfc-editor.org/info/rfc6906",
+            },
+        )
+        cases = pattern.resolve_test_cases()
+        assert len(cases) == 3
+        assert cases[0].targets.urls == ["https://example.org/dataset/1"]
+        assert cases[1].targets.urls == ["https://example.org/profile/marine"]
+        assert cases[2].targets.urls == ["https://example.org/profile/marine.ttl"]
+        assert cases[2].name.endswith("Profile Description Conformance")
+        rels = {r.rel: r.target for r in cases[2].expect.relations}
+        assert "profile" in rels
+        assert rels["profile"] == "http://www.w3.org/ns/dx/prof/Profile"
+        assert "type" not in rels
+
+    def test_resolve_with_both_profile_and_type(self):
+        pattern = PatternRegistry.create(
+            "PT-01",
+            roles={
+                "resource": "https://example.org/dataset/1",
+                "profile": "https://example.org/profile/marine",
+                "profile_description": "https://example.org/profile/marine.ttl",
+                "profile_description_profile": "http://www.w3.org/ns/dx/prof/Profile",
+                "profile_description_type": "https://www.rfc-editor.org/info/rfc6906",
+            },
+        )
+        cases = pattern.resolve_test_cases()
+        assert len(cases) == 3
+        rels = {r.rel: r.target for r in cases[2].expect.relations}
+        assert rels["profile"] == "http://www.w3.org/ns/dx/prof/Profile"
+        assert rels["type"] == "https://www.rfc-editor.org/info/rfc6906"
+
 
 
 class TestPT02ProfileComposition:
@@ -671,7 +710,6 @@ class TestPT09ReleaseLinks:
         # 2. Latest release assertions
         assert cases[1].targets.urls == ["https://example.org/id/dataset/90/v2.1"]
         l_rels = {r.rel: r.target for r in cases[1].expect.relations}
-        assert l_rels["collection"] == "https://example.org/id/dataset/90"
         assert l_rels["version-history"] == "https://example.org/id/dataset/90/history"
         assert l_rels["predecessor-version"] == "https://example.org/id/dataset/90/v2.0"
         assert l_rels["cite-as"] == "https://doi.org/10.14284/90.v2.1"
@@ -679,7 +717,6 @@ class TestPT09ReleaseLinks:
         # 3. History assertions
         assert cases[2].targets.urls == ["https://example.org/id/dataset/90/history"]
         h_rels = [r for r in cases[2].expect.relations]
-        assert any(r.rel == "collection" and r.target == "https://example.org/id/dataset/90" for r in h_rels)
         assert any(r.rel == "item" and r.target == "https://example.org/id/dataset/90/v2.1" for r in h_rels)
 
     def test_resolve_full_chain(self):
@@ -717,12 +754,12 @@ class TestPT09ReleaseLinks:
         # 1 series + 3 releases + 1 history = 5 test cases
         assert len(cases) == 5
 
-        # Release v2.0 has both predecessor and successor
+        # Release v2.0 has both predecessor and successor, and links to version history
         v20_case = next(c for c in cases if "v2.0" in c.name)
         v20_rels = {r.rel: r.target for r in v20_case.expect.relations}
         assert v20_rels["predecessor-version"] == "https://example.org/id/dataset/90/v1.0"
         assert v20_rels["successor-version"] == "https://example.org/id/dataset/90/v2.1"
-        assert v20_rels["collection"] == "https://example.org/id/dataset/90"
+        assert v20_rels["version-history"] == "https://example.org/id/dataset/90/history"
         assert v20_rels["cite-as"] == "https://doi.org/10.14284/90.v2.0"
 
         # History has item downlinks to all 3 releases

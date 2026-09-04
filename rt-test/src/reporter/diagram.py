@@ -174,13 +174,16 @@ class ASCIIDiagramRenderer:
         prof_uri = roles.get("profile") or "Profile URI"
         desc_raw = roles.get("profile_description") or roles.get("description") or roles.get("profile_doc")
         desc_uri = None
-        desc_type = roles.get("profile_description_type") or roles.get("description_type") or roles.get("profile_description_profile")
+        desc_type = roles.get("profile_description_type") or roles.get("description_type") or roles.get("desc_type")
+        desc_profile = roles.get("profile_description_profile") or roles.get("description_profile") or roles.get("desc_profile")
         if isinstance(desc_raw, str):
             desc_uri = desc_raw.strip()
         elif isinstance(desc_raw, dict):
             desc_uri = (desc_raw.get("uri") or desc_raw.get("href") or desc_raw.get("url") or "").strip()
             if not desc_type:
-                desc_type = (desc_raw.get("type") or desc_raw.get("profile") or "").strip()
+                desc_type = (desc_raw.get("type") or "").strip() or None
+            if not desc_profile:
+                desc_profile = (desc_raw.get("profile") or "").strip() or None
 
         type_uri = roles.get("profile_type")
         alts = roles.get("profile_alternate") or roles.get("profile_alternates") or []
@@ -229,13 +232,31 @@ class ASCIIDiagramRenderer:
                     d_str = d_str[: LINE_WIDTH - 18] + "..."
                 diagram.append(f"{d_str:<{LINE_WIDTH - 14}} {badge:>13}")
 
+                desc_node = nodes.get(desc_uri)
+                target_url = getattr(result, "target_url", "")
+
+                if desc_profile:
+                    dp_passed = False
+                    if desc_node:
+                        dp_matches = desc_node.all_links.find_links(rel="profile", target=desc_profile)
+                        dp_passed = len(dp_matches) > 0
+                    elif target_url == desc_uri:
+                        dp_passed = getattr(result, "passed", False)
+                    badge_dp = _status_badge(dp_passed) if (desc_node or target_url == desc_uri) else "[? UNCHECKED]"
+                    pipe_prefix = "        |     +--- " if (type_uri or desc_type) else "              +--- "
+                    dp_str = f"{pipe_prefix}rel=\"profile\"     -> {desc_profile}"
+                    if len(dp_str) > LINE_WIDTH - 15:
+                        dp_str = dp_str[: LINE_WIDTH - 18] + "..."
+                    diagram.append(f"{dp_str:<{LINE_WIDTH - 14}} {badge_dp:>13}")
+
                 if desc_type:
-                    desc_node = nodes.get(desc_uri)
                     dt_passed = False
                     if desc_node:
                         dt_matches = desc_node.all_links.find_links(rel="type", target=desc_type)
                         dt_passed = len(dt_matches) > 0
-                    badge_dt = _status_badge(dt_passed) if desc_node else "[? UNCHECKED]"
+                    elif target_url == desc_uri:
+                        dt_passed = getattr(result, "passed", False)
+                    badge_dt = _status_badge(dt_passed) if (desc_node or target_url == desc_uri) else "[? UNCHECKED]"
                     pipe_prefix = "        |     +--- " if type_uri else "              +--- "
                     dt_str = f"{pipe_prefix}rel=\"type\"        -> {desc_type}"
                     if len(dt_str) > LINE_WIDTH - 15:
@@ -351,12 +372,12 @@ class ASCIIDiagramRenderer:
     def _render_pt04(roles: Dict[str, Any], result: Any, nodes: Dict[str, ResourceNode]) -> str:
         pid_uri = roles.get("pid") or "PID URI"
         content_uri = roles.get("content") or getattr(result, "target_url", "Content URI")
-        descriptions = roles.get("descriptions", [])
-        if isinstance(descriptions, str):
-            descriptions = [{"uri": descriptions}]
+        raw_descriptions = roles.get("descriptions", [])
+        if isinstance(raw_descriptions, str):
+            raw_descriptions = [{"uri": raw_descriptions}]
 
         target_url = getattr(result, "target_url", "")
-        res_uri = roles.get("resource") or roles.get("dataset") or roles.get("concept") or content_uri
+        res_uri = roles.get("resource") or roles.get("dataset") or roles.get("concept")
 
         c_node = nodes.get(content_uri) or (getattr(result, "harvest_node", None) if target_url == content_uri else None)
         cite_passed = False
@@ -364,39 +385,103 @@ class ASCIIDiagramRenderer:
             cite_matches = c_node.all_links.find_links(rel="cite-as", target=pid_uri if pid_uri != "PID URI" else None)
             cite_passed = len(cite_matches) > 0
         else:
-            cite_passed = getattr(result, "passed", False)
+            cite_passed = getattr(result, "passed", False) if target_url == content_uri else False
 
         diagram = []
         diagram.extend(_make_box("Content Payload", content_uri))
-        diagram.extend([
-            "        |                                    |",
-            f"        | rel=\"cite-as\" {_status_badge(cite_passed)}             | rel=\"describedby\"",
-            "        v                                    v",
-            "  [ PID / Handle ]                 [ Metadata Descriptions ]",
-            f"  {pid_uri[:60]}",
-        ])
+        diagram.append("        |")
+        diagram.append('        | Persistent Identifier (rel="cite-as"):')
 
-        for d in descriptions:
-            d_uri = d.get("uri") if isinstance(d, dict) else str(d)
-            d_type = d.get("type", "") if isinstance(d, dict) else ""
-            d_passed = False
-            if c_node:
-                d_matches = c_node.all_links.find_links(rel="describedby", target=d_uri)
-                d_passed = len(d_matches) > 0
+        pid_line = f"        +---> rel=\"cite-as\" -> {pid_uri}"
+        if len(pid_line) > LINE_WIDTH - 15:
+            pid_line = pid_line[: LINE_WIDTH - 18] + "..."
+        badge_pid = _status_badge(cite_passed) if c_node else ("[✓ PASS]" if cite_passed else "[? UNCHECKED]")
+        diagram.append(f"{pid_line:<{LINE_WIDTH - 14}} {badge_pid:>13}")
+        diagram.append("        |")
 
-            d_node = nodes.get(d_uri) or (getattr(result, "harvest_node", None) if target_url == d_uri else None)
-            describes_passed = False
-            if d_node:
-                desc_matches = d_node.all_links.find_links(rel="describes", target=res_uri) or d_node.all_links.find_links(rel="describes", target=content_uri)
-                describes_passed = len(desc_matches) > 0
-            elif target_url == d_uri:
-                describes_passed = getattr(result, "passed", False)
+        desc_specs = []
+        for d in raw_descriptions:
+            if isinstance(d, str):
+                desc_specs.append({"uri": d.strip(), "type": None})
+            elif isinstance(d, dict):
+                desc_specs.append({
+                    "uri": d.get("uri") or d.get("href") or d.get("target") or "",
+                    "type": d.get("type") or d.get("media_type") or "",
+                })
 
-            type_info = f" ({d_type})" if d_type else ""
-            d_str = f"  * {d_uri}{type_info}"
-            if len(d_str) > LINE_WIDTH - 40:
-                d_str = d_str[: LINE_WIDTH - 43] + "..."
-            diagram.append(f"{d_str} {_status_badge(d_passed)} (describes resource {_status_badge(describes_passed)})")
+        diagram.append('        | Metadata Descriptions (rel="describedby"):')
+        if not desc_specs:
+            empty_line = '        +---> (No descriptions declared)'
+            diagram.append(f"{empty_line:<{LINE_WIDTH - 14}} {'[✗ MISSING]':>13}")
+        else:
+            for idx, d_spec in enumerate(desc_specs):
+                is_last_desc = (idx == len(desc_specs) - 1)
+                pipe_prefix = "              " if is_last_desc else "        |     "
+                d_uri = d_spec["uri"]
+                d_type = d_spec.get("type", "")
+
+                t_lower = (d_type or "").lower()
+                u_lower = d_uri.lower()
+                if "html" in t_lower or u_lower.endswith(".html") or u_lower.endswith(".htm"):
+                    cat_label = "[HTML / Option A]"
+                elif any(k in t_lower for k in ["turtle", "json", "xml", "rdf"]) or any(u_lower.endswith(ext) for ext in [".ttl", ".json", ".jsonld", ".xml", ".rdf"]):
+                    cat_label = "[Machine / Option B]"
+                elif d_type:
+                    cat_label = f"[{d_type}]"
+                else:
+                    cat_label = "[Option]"
+
+                d_passed = False
+                if c_node:
+                    d_matches = c_node.all_links.find_links(rel="describedby", target=d_uri)
+                    d_passed = len(d_matches) > 0
+                else:
+                    d_passed = getattr(result, "passed", False) if target_url == content_uri else False
+                badge_d = _status_badge(d_passed) if c_node else ("[✓ PASS]" if d_passed else "[? UNCHECKED]")
+
+                type_info = f" [{d_type}]" if d_type and d_type not in cat_label else ""
+                d_line = f"        +---> {cat_label} {d_uri}{type_info}"
+                if len(d_line) > LINE_WIDTH - 15:
+                    d_line = d_line[: LINE_WIDTH - 18] + "..."
+                diagram.append(f"{d_line:<{LINE_WIDTH - 14}} {badge_d:>13}")
+
+                d_node = nodes.get(d_uri) or (getattr(result, "harvest_node", None) if target_url == d_uri else None)
+                describes_target = res_uri or content_uri
+                describes_passed = False
+                if d_node:
+                    desc_matches = d_node.all_links.find_links(rel="describes", target=describes_target)
+                    if not desc_matches and res_uri and res_uri != content_uri:
+                        desc_matches = d_node.all_links.find_links(rel="describes", target=content_uri)
+                    describes_passed = len(desc_matches) > 0
+                elif target_url == d_uri:
+                    describes_passed = getattr(result, "passed", False)
+
+                badge_desc = _status_badge(describes_passed) if d_node else ("[✓ PASS]" if describes_passed else "[? UNCHECKED]")
+                desc_subline = f"{pipe_prefix}+--- rel=\"describes\" -> {describes_target}"
+                if len(desc_subline) > LINE_WIDTH - 15:
+                    desc_subline = desc_subline[: LINE_WIDTH - 18] + "..."
+                diagram.append(f"{desc_subline:<{LINE_WIDTH - 14}} {badge_desc:>13}")
+
+                for other_spec in desc_specs:
+                    other_uri = other_spec["uri"]
+                    if other_uri != d_uri:
+                        alt_passed = False
+                        if d_node:
+                            alt_matches = d_node.all_links.find_links(rel="alternate", target=other_uri)
+                            alt_passed = len(alt_matches) > 0
+                        badge_alt = _status_badge(alt_passed) if d_node else ("[✓ PASS]" if alt_passed else "[? UNCHECKED]")
+                        alt_subline = f"{pipe_prefix}+--- rel=\"alternate\" -> {other_uri}"
+                        if len(alt_subline) > LINE_WIDTH - 15:
+                            alt_subline = alt_subline[: LINE_WIDTH - 18] + "..."
+                        diagram.append(f"{alt_subline:<{LINE_WIDTH - 14}} {badge_alt:>13}")
+
+                if not is_last_desc:
+                    diagram.append("        |")
+
+        if res_uri:
+            diagram.append("        |")
+            diagram.append("        v")
+            diagram.extend(_make_box("Target Conceptual Resource", res_uri))
 
         return "\n".join(diagram)
 
@@ -1233,11 +1318,12 @@ class ASCIIDiagramRenderer:
                 r_node = nodes.get(r_uri)
                 pred_passed = False
                 succ_passed = False
-                coll_passed = False
+                hist_passed = False
 
                 if r_node:
-                    c_matches = r_node.all_links.find_links(rel="collection", target=series_uri)
-                    coll_passed = len(c_matches) > 0
+                    if history_uri:
+                        h_matches = r_node.all_links.find_links(rel="version-history", target=history_uri)
+                        hist_passed = len(h_matches) > 0
                     if r_pred:
                         p_matches = r_node.all_links.find_links(rel="predecessor-version", target=r_pred)
                         pred_passed = len(p_matches) > 0
@@ -1246,7 +1332,9 @@ class ASCIIDiagramRenderer:
                         succ_passed = len(s_matches) > 0
 
                 is_latest = (r_uri == latest_uri)
-                status_parts = [f"collection: {_status_badge(coll_passed)}"]
+                status_parts = []
+                if history_uri:
+                    status_parts.append(f"v-hist: {_status_badge(hist_passed)}")
                 if r_pred:
                     status_parts.append(f"pred: {_status_badge(pred_passed)}")
                 if r_succ:

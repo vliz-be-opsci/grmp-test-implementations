@@ -83,7 +83,8 @@ Declares that a resource conforms to a specific functional profile ([RFC 6906](h
   +----------------------------------------------------------------------------+
           |
           +---> rel="describedby" -> <profile_description>             [✓ PASS]
-          |     +--- rel="type"   -> <profile_description_type>        [✓ PASS]
+          |     +--- rel="profile"  -> <profile_description_profile>     [✓ PASS]
+          |     +--- rel="type"     -> <profile_description_type>        [✓ PASS]
           +---> rel="type"        -> <profile_type>                    [✓ PASS]
   ==============================================================================
   ```
@@ -93,8 +94,9 @@ Declares that a resource conforms to a specific functional profile ([RFC 6906](h
   | :--- | :--- | :--- | :--- |
   | `resource` | URI string | **Required** | The target dataset, service, or landing page declaring conformance. |
   | `profile` | URI string | **Required** | The canonical profile URI that the resource conforms to. |
-  | `profile_description` | URI string or object | Optional | Documentation or schema describing the profile via `rel="describedby"`. Supports string URI or object with `uri` and `type`. |
-  | `profile_description_type` | URI string | Optional | Type standard URI for the profile description document (e.g. `http://www.w3.org/ns/dx/prof/Profile`). |
+  | `profile_description` | URI string or object | Optional | Documentation or schema describing the profile via `rel="describedby"`. Supports string URI or object with `uri`, `type`, and `profile`. |
+  | `profile_description_profile` | URI string | Optional | Profile standard URI that the profile description document conforms to via `rel="profile"` (e.g. `http://www.w3.org/ns/dx/prof/Profile`). |
+  | `profile_description_type` | URI string | Optional | Type standard URI for the profile description document via `rel="type"` (e.g. RFC 6906 or class). |
   | `profile_type` | URI string | Optional | Profile type identifier via `rel="type"` (e.g. `https://www.rfc-editor.org/info/rfc6906` or `http://www.w3.org/ns/dx/prof/Profile`). |
   | `profile_alternate` | URI string / list | Optional | Alternate representation URI(s) for the profile (e.g. `.ttl`, `.jsonld`, `.html`). |
 
@@ -107,8 +109,8 @@ Declares that a resource conforms to a specific functional profile ([RFC 6906](h
         resource: "http://localhost:8080/id/dataset/arms-mbon"
         profile: "http://localhost:8080/id/profile/marine-genomic-dataset-profile"
         profile_description: "http://localhost:8080/id/profile/marine-genomic-dataset-profile.ttl"
-        profile_description_type: "http://www.w3.org/ns/dx/prof/Profile"
-        profile_type: "http://www.w3.org/ns/dx/prof/Profile"
+        profile_description_profile: "http://www.w3.org/ns/dx/prof/Profile"
+        profile_type: "https://www.rfc-editor.org/info/rfc6906"
   ```
 
 ---
@@ -232,20 +234,31 @@ Validates direct payload access (CSV, NetCDF, GeoTIFF, PDF) without requiring an
 
 * **Test Output ASCII Diagram**:
   ```text
-  ==============================================================================
+  ============================================================================================================================================
   DIAGRAM: No Landing Page Solution (PT-04)
   Overall Status: [✓ PASS]
-  ------------------------------------------------------------------------------
-  +----------------------------------------------------------------------------+
-  | Content Payload: <content>                                                 |
-  +----------------------------------------------------------------------------+
-          |                                    |
-          | rel="cite-as" [✓ PASS]             | rel="describedby"
-          v                                    v
-    [ PID / Handle ]                 [ Metadata Descriptions ]
-    <pid>                            * <description_1> [<type_1>] [✓ PASS] (describes resource [✓ PASS])
-                                     * <description_2> [<type_2>] [✓ PASS] (describes resource [✓ PASS])
-  ==============================================================================
+  --------------------------------------------------------------------------------------------------------------------------------------------
+  +------------------------------------------------------------------------------------------------------------------------------------------+
+  | Content Payload: http://localhost:8080/data/arms-mbon-18s.csv                                                                            |
+  +------------------------------------------------------------------------------------------------------------------------------------------+
+          |
+          | Persistent Identifier (rel="cite-as"):
+          +---> rel="cite-as" -> http://localhost:8080/doi/10.14284/578                                                               [✓ PASS]
+          |
+          | Metadata Descriptions (rel="describedby"):
+          +---> [Machine / Option B] http://localhost:8080/id/dataset/arms-mbon.ttl [text/turtle]                                     [✓ PASS]
+          |     +--- rel="describes" -> http://localhost:8080/id/dataset/arms-mbon                                                    [✓ PASS]
+          |     +--- rel="alternate" -> http://localhost:8080/id/dataset/arms-mbon.html                                               [✓ PASS]
+          |
+          +---> [HTML / Option A] http://localhost:8080/id/dataset/arms-mbon.html [text/html]                                         [✓ PASS]
+                +--- rel="describes" -> http://localhost:8080/id/dataset/arms-mbon                                                    [✓ PASS]
+                +--- rel="alternate" -> http://localhost:8080/id/dataset/arms-mbon.ttl                                                [✓ PASS]
+          |
+          v
+  +------------------------------------------------------------------------------------------------------------------------------------------+
+  | Target Conceptual Resource: http://localhost:8080/id/dataset/arms-mbon                                                                   |
+  +------------------------------------------------------------------------------------------------------------------------------------------+
+  ============================================================================================================================================
   ```
 
 * **Configurable URIs & Roles (`uris:`)**:
